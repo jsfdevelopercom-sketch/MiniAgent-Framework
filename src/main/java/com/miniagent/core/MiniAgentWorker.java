@@ -55,9 +55,12 @@ public class MiniAgentWorker {
         String sysPrompt = promptFactory.buildWorkerSystemPrompt(domainContext);
         String userPrompt = promptFactory.buildWorkerUserPrompt(taskInstructions, dataset, liveInjections);
 
-        // Currently defaulting to OpenAI for structured Drafts due to deeper JSON_schema support,
-        // but could easily branch to Gemini if requested.
-        String rawJson = openAiHttpClient.executeStructuredCall(model, sysPrompt, userPrompt);
+        String rawJson;
+        if (model != null && model.toLowerCase().startsWith("gemini")) {
+            rawJson = geminiHttpClient.executeStructuredCall(model, sysPrompt, userPrompt);
+        } else {
+            rawJson = openAiHttpClient.executeStructuredCall(model, sysPrompt, userPrompt);
+        }
         return parseToStructuredResult(rawJson);
     }
 
@@ -89,7 +92,12 @@ public class MiniAgentWorker {
                 dataset
         );
 
-        String rawJson = openAiHttpClient.executeStructuredCall(model, sysPrompt, userPrompt);
+        String rawJson;
+        if (model != null && model.toLowerCase().startsWith("gemini")) {
+            rawJson = geminiHttpClient.executeStructuredCall(model, sysPrompt, userPrompt);
+        } else {
+            rawJson = openAiHttpClient.executeStructuredCall(model, sysPrompt, userPrompt);
+        }
         return parseToStructuredResult(rawJson);
     }
 

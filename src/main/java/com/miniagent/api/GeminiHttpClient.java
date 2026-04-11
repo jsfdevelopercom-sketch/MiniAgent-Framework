@@ -40,6 +40,62 @@ public class GeminiHttpClient {
     }
 
     /**
+     * Executes a generative call forcing JSON output format.
+     *
+     * @param model the Gemini model name
+     * @param systemPrompt the system-level guidelines
+     * @param userPrompt the specific user tasks
+     * @return the raw JSON generated output
+     */
+    public String executeStructuredCall(String model, String systemPrompt, String userPrompt) {
+        String apiKey = config.getGeminiApiKey();
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalStateException("Gemini API key is missing from AgentConfig.");
+        }
+
+        String targetModel = model != null ? model : config.getDefaultGeminiModel();
+
+        try {
+            Map<String, Object> request = new LinkedHashMap<>();
+
+            // Contents
+            Map<String, Object> contents = new LinkedHashMap<>();
+            contents.put("role", "user");
+            String combinedText = "SYSTEM INSTRUCTION:\n" + systemPrompt + "\n\nUSER PROMPT:\n" + userPrompt;
+            contents.put("parts", List.of(Map.of("text", combinedText)));
+            request.put("contents", List.of(contents));
+
+            // Generation Config for JSON Mode
+            Map<String, Object> generationConfig = new LinkedHashMap<>();
+            generationConfig.put("response_mime_type", "application/json");
+            request.put("generationConfig", generationConfig);
+
+            String requestBody = mapper.writeValueAsString(request);
+            String url = "https://generativelanguage.googleapis.com/v1beta/models/" + targetModel + ":generateContent?key=" + apiKey;
+
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(45))
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() >= 400) {
+                throw new RuntimeException("Gemini API Error HTTP " + response.statusCode() + ": " + response.body());
+            }
+
+            JsonNode root = mapper.readTree(response.body());
+            JsonNode textNode = root.path("candidates").path(0).path("content").path("parts").path(0).path("text");
+            return textNode.asText();
+
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to invoke Gemini structured call.", e);
+        }
+    }
+
+    /**
      * Executes a generative text-only call.
      * 
      * @param model the Gemini model name (e.g., gemini-1.5-flash)
