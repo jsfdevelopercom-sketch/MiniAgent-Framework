@@ -64,6 +64,9 @@ public class GeminiHttpClient {
             String combinedText = "SYSTEM INSTRUCTION:\n" + systemPrompt + "\n\nUSER PROMPT:\n" + userPrompt;
             contents.put("parts", List.of(Map.of("text", combinedText)));
             request.put("contents", List.of(contents));
+            
+            // Force strict JSON output generation for supported v1beta models
+            request.put("generationConfig", java.util.Map.of("responseMimeType", "application/json"));
 
             String requestBody = mapper.writeValueAsString(request);
             String url = "https://generativelanguage.googleapis.com/v1beta/models/" + targetModel + ":generateContent?key=" + apiKey;
