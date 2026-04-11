@@ -87,8 +87,8 @@ public class GeminiHttpClient {
             JsonNode textNode = root.path("candidates").path(0).path("content").path("parts").path(0).path("text");
             
             if (textNode.isMissingNode()) {
-                System.err.println("[GEMINI ERROR] Unexpected response format: " + response.body());
-                throw new RuntimeException("Gemini API returned an unexpected response structure: " + response.body());
+                System.err.println("[GEMINI WARNING] Unexpected or empty response format: " + response.body());
+                return "{\"thought_process\":\"Gemini generated an empty response payload.\",\"summary\":\"Sorry, but the AI generated an empty response for that query. Please try again or rephrase.\",\"convo\":\"\"}";
             }
             String responseJson = textNode.asText().trim();
             if (responseJson.startsWith("```json")) {
@@ -158,6 +158,10 @@ public class GeminiHttpClient {
 
             JsonNode root = mapper.readTree(response.body());
             JsonNode textNode = root.path("candidates").path(0).path("content").path("parts").path(0).path("text");
+            if (textNode.isMissingNode()) {
+                System.err.println("[GEMINI WARNING] Unexpected or empty response format: " + response.body());
+                return "AI generated an empty response.";
+            }
             return textNode.asText();
 
         } catch (Exception e) {
