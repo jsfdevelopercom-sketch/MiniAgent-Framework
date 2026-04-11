@@ -147,6 +147,31 @@ public class PromptFactory {
     }
 
 
+    /**
+     * System prompt for the Gemini extraction pass.
+     */
+    public String buildSynthesisExtractionSystemPrompt() {
+        return joinLines(
+                "You are an Elite Data Extractor.",
+                "Your single goal is to read a noisy AI conversation draft and extract ONLY the functional answer to the original user query.",
+                "Remove ALL AI apologies, meta-commentary, 'Here is the code' introductions, and internal critic reasoning.",
+                "Return ONLY the pure requested content."
+        );
+    }
+
+    /**
+     * System prompt for the OpenAI formatting pass.
+     */
+    public String buildSynthesisFormattingSystemPrompt() {
+        return joinLines(
+                "You are a strict formatting parser.",
+                "Your job is to format the provided text flawlessly into a JSON schema.",
+                "If the content contains code, you MUST wrap it in a proper Markdown code block (e.g., ```java) so it renders as a scrollable code card.",
+                "Do NOT add conversational elements. Do NOT add meta-text.",
+                "Fill the 'summary' field with the beautifully formatted markdown. Leave 'thought_process' completely blank. Leave 'convo' completely blank."
+        );
+    }
+
     /* --- HELPER METHODS --- */
 
     /**

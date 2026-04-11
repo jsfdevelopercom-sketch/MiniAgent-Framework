@@ -65,13 +65,13 @@ public class GeminiHttpClient {
             contents.put("parts", List.of(Map.of("text", combinedText)));
             request.put("contents", List.of(contents));
 
-            // Generation Config for JSON Mode
+            // Generation Config for JSON Mode (Use camelCase for v1 REST API)
             Map<String, Object> generationConfig = new LinkedHashMap<>();
-            generationConfig.put("response_mime_type", "application/json");
+            generationConfig.put("responseMimeType", "application/json");
             request.put("generationConfig", generationConfig);
 
             String requestBody = mapper.writeValueAsString(request);
-            String url = "https://generativelanguage.googleapis.com/v1beta/models/" + targetModel + ":generateContent?key=" + apiKey;
+            String url = "https://generativelanguage.googleapis.com/v1/models/" + targetModel + ":generateContent?key=" + apiKey;
 
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(url))
@@ -83,15 +83,23 @@ public class GeminiHttpClient {
             HttpResponse<String> response = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() >= 400) {
-                throw new RuntimeException("Gemini API Error HTTP " + response.statusCode() + ": " + response.body());
+                String errorBody = response.body();
+                System.err.println("[GEMINI ERROR] Status " + response.statusCode() + ": " + errorBody);
+                throw new RuntimeException("Gemini API Error HTTP " + response.statusCode() + ": " + errorBody);
             }
 
             JsonNode root = mapper.readTree(response.body());
             JsonNode textNode = root.path("candidates").path(0).path("content").path("parts").path(0).path("text");
+            
+            if (textNode.isMissingNode()) {
+                System.err.println("[GEMINI ERROR] Unexpected response format: " + response.body());
+                throw new RuntimeException("Gemini API returned an unexpected response structure: " + response.body());
+            }
+            
             return textNode.asText();
 
         } catch (Exception e) {
-            throw new RuntimeException("Failed to invoke Gemini structured call.", e);
+            throw new RuntimeException("Failed to invoke Gemini structured call. Reason: " + e.getMessage(), e);
         }
     }
 
