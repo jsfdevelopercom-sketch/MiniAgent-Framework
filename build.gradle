@@ -1,0 +1,21 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'com.silicondoctor'
+version = '1.0-SNAPSHOT'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    api 'com.fasterxml.jackson.core:jackson-databind:2.15.2'
+    api 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.15.2'
+}
