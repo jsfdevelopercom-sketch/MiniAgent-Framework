@@ -35,10 +35,10 @@ public class OutputSynthesizer {
     public StructuredResponse synthesize(StructuredResponse draft, String originalQuery) {
         try {
             // Step 1: Gemini Extraction
-            System.out.println("[SYNTHESIZER] Step 1: Gemini Extraction running...");
-            String geminiSys = promptFactory.buildSynthesisExtractionSystemPrompt();
-            String geminiUser = "Original User Query: " + originalQuery + "\n\nMessy AI Draft:\n" + draft.getSummary() + "\n\n" + draft.getRaw();
-            String extractedRaw = gemini.executeTextCall("gemini-2.0-flash", geminiSys, geminiUser);
+            System.out.println("[SYNTHESIZER] Step 1: Extraction running...");
+            String extractionSys = promptFactory.buildSynthesisExtractionSystemPrompt();
+            String extractionUser = "Original User Query: " + originalQuery + "\n\nMessy AI Draft:\n" + draft.getSummary() + "\n\n" + draft.getRaw();
+            String extractedRaw = openAi.executeTextCall("gpt-4o-mini", extractionSys, extractionUser);
 
             // Step 2: OpenAI Schema & Markdown Formatting
             System.out.println("[SYNTHESIZER] Step 2: OpenAI Formatting running...");
