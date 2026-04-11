@@ -38,7 +38,7 @@ public class OutputSynthesizer {
             System.out.println("[SYNTHESIZER] Step 1: Extraction running...");
             String extractionSys = promptFactory.buildSynthesisExtractionSystemPrompt();
             String extractionUser = "Original User Query: " + originalQuery + "\n\nMessy AI Draft:\n" + draft.getSummary() + "\n\n" + draft.getRaw();
-            String extractedRaw = openAi.executeTextCall("gpt-4o-mini", extractionSys, extractionUser);
+            String extractedRaw = gemini.executeTextCall("gemini-2.5-flash", extractionSys, extractionUser);
 
             // Step 2: OpenAI Schema & Markdown Formatting
             System.out.println("[SYNTHESIZER] Step 2: OpenAI Formatting running...");

@@ -66,7 +66,7 @@ public class GeminiHttpClient {
             request.put("contents", List.of(contents));
 
             String requestBody = mapper.writeValueAsString(request);
-            String url = "https://generativelanguage.googleapis.com/v1/models/" + targetModel + ":generateContent?key=" + apiKey;
+            String url = "https://generativelanguage.googleapis.com/v1beta/models/" + targetModel + ":generateContent?key=" + apiKey;
 
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(url))
@@ -141,7 +141,7 @@ public class GeminiHttpClient {
             request.put("contents", List.of(contents));
 
             String requestBody = mapper.writeValueAsString(request);
-            String url = "https://generativelanguage.googleapis.com/v1/models/" + targetModel + ":generateContent?key=" + apiKey;
+            String url = "https://generativelanguage.googleapis.com/v1beta/models/" + targetModel + ":generateContent?key=" + apiKey;
 
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(url))

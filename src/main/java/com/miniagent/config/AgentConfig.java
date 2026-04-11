@@ -17,7 +17,7 @@ public class AgentConfig {
 
     // The topmost default models if the system chooses to fall back or auto-assign.
     private String defaultOpenaiModel = "gpt-4o-mini";
-    private String defaultGeminiModel = "gemini-2.0-flash";
+    private String defaultGeminiModel = "gemini-2.5-flash";
     
     private String topmostAllowedModel = "gpt-4o";
 
