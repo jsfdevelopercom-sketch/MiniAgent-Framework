@@ -43,10 +43,11 @@ public class MiniAgentClient {
 
         OpenAiHttpClient openAiHttpClient = new OpenAiHttpClient(config, mapper);
         GeminiHttpClient geminiHttpClient = new GeminiHttpClient(config, mapper);
-        
         PromptFactory promptFactory = new PromptFactory();
         
-        this.worker = new MiniAgentWorker(openAiHttpClient, geminiHttpClient, promptFactory, mapper);
+        com.miniagent.api.ClaudeHttpClient claudeHttpClient = new com.miniagent.api.ClaudeHttpClient(config);
+        
+        this.worker = new MiniAgentWorker(openAiHttpClient, geminiHttpClient, claudeHttpClient, promptFactory, mapper);
         this.evaluator = new MiniAgentEvaluator(openAiHttpClient, geminiHttpClient, promptFactory);
     }
 

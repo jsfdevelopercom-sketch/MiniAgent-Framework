@@ -1,0 +1,95 @@
+package com.miniagent.api;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.miniagent.config.AgentConfig;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Handles communication with the Anthropic Claude API using java.net.http.
+ */
+public class ClaudeHttpClient {
+
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final HttpClient httpClient = HttpClient.newHttpClient();
+    private final AgentConfig config;
+
+    public ClaudeHttpClient(AgentConfig config) {
+        this.config = config;
+    }
+
+    /**
+     * Executes a call expecting a structured JSON response.
+     */
+    public String executeStructuredCall(String model, String systemPrompt, String userPrompt) {
+        String apiKey = config.getClaudeApiKey();
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new RuntimeException("Claude API key is not configured.");
+        }
+
+        try {
+            Map<String, Object> request = new HashMap<>();
+            request.put("model", model);
+            request.put("max_tokens", 4000);
+            request.put("system", systemPrompt);
+
+            List<Map<String, Object>> messages = new ArrayList<>();
+            messages.add(Map.of(
+                "role", "user",
+                "content", userPrompt + "\n\nRETURN ONLY VALID JSON. Start your response with { and end with }."
+            ));
+            request.put("messages", messages);
+
+            String requestBody = mapper.writeValueAsString(request);
+            
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create("https://api.anthropic.com/v1/messages"))
+                    .header("Content-Type", "application/json")
+                    .header("x-api-key", apiKey)
+                    .header("anthropic-version", "2023-06-01")
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() >= 400) {
+                System.err.println("[CLAUDE ERROR] HTTP " + response.statusCode() + ": " + response.body());
+                throw new RuntimeException("Claude API Error: " + response.body());
+            }
+
+            JsonNode root = mapper.readTree(response.body());
+            JsonNode textNode = root.path("content").path(0).path("text");
+            
+            if (textNode.isMissingNode()) {
+                System.err.println("[CLAUDE WARNING] Empty response: " + response.body());
+                return "{\"thought_process\":\"Claude returned an empty frame.\",\"summary\":\"Sorry, but Claude generated an empty response.\",\"convo\":\"\"}";
+            }
+
+            String responseJson = textNode.asText().trim();
+            if (responseJson.startsWith("```json")) {
+                responseJson = responseJson.substring(7);
+                if (responseJson.endsWith("```")) {
+                    responseJson = responseJson.substring(0, responseJson.length() - 3);
+                }
+            } else if (responseJson.startsWith("```")) {
+                responseJson = responseJson.substring(3);
+                if (responseJson.endsWith("```")) {
+                    responseJson = responseJson.substring(0, responseJson.length() - 3);
+                }
+            }
+            return responseJson.trim();
+
+        } catch (Exception e) {
+            System.err.println("Failed to invoke Claude." + e.getMessage());
+            throw new RuntimeException("Failed to invoke Claude structured call. Reason: " + e.getMessage(), e);
+        }
+    }
+}

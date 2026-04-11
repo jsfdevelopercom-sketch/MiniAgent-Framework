@@ -1,6 +1,7 @@
 package com.miniagent.core;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.miniagent.api.ClaudeHttpClient;
 import com.miniagent.api.GeminiHttpClient;
 import com.miniagent.api.OpenAiHttpClient;
 import com.miniagent.config.AgentConfig;
@@ -20,17 +21,20 @@ public class MiniAgentWorker {
 
     private final OpenAiHttpClient openAiHttpClient;
     private final GeminiHttpClient geminiHttpClient;
+    private final ClaudeHttpClient claudeHttpClient;
     private final PromptFactory promptFactory;
     private final ObjectMapper mapper;
 
     public MiniAgentWorker(
             OpenAiHttpClient openAiHttpClient,
             GeminiHttpClient geminiHttpClient,
+            ClaudeHttpClient claudeHttpClient,
             PromptFactory promptFactory,
             ObjectMapper mapper
     ) {
         this.openAiHttpClient = openAiHttpClient;
         this.geminiHttpClient = geminiHttpClient;
+        this.claudeHttpClient = claudeHttpClient;
         this.promptFactory = promptFactory;
         this.mapper = mapper;
     }
@@ -58,6 +62,8 @@ public class MiniAgentWorker {
         String rawJson;
         if (model != null && model.toLowerCase().startsWith("gemini")) {
             rawJson = geminiHttpClient.executeStructuredCall(model, sysPrompt, userPrompt);
+        } else if (model != null && model.toLowerCase().startsWith("claude")) {
+            rawJson = claudeHttpClient.executeStructuredCall(model, sysPrompt, userPrompt);
         } else {
             rawJson = openAiHttpClient.executeStructuredCall(model, sysPrompt, userPrompt);
         }
@@ -95,6 +101,8 @@ public class MiniAgentWorker {
         String rawJson;
         if (model != null && model.toLowerCase().startsWith("gemini")) {
             rawJson = geminiHttpClient.executeStructuredCall(model, sysPrompt, userPrompt);
+        } else if (model != null && model.toLowerCase().startsWith("claude")) {
+            rawJson = claudeHttpClient.executeStructuredCall(model, sysPrompt, userPrompt);
         } else {
             rawJson = openAiHttpClient.executeStructuredCall(model, sysPrompt, userPrompt);
         }

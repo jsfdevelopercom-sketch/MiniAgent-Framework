@@ -1,0 +1,16 @@
+HTTP/2 500 
+access-control-allow-origin: https://www.agent-nero.com
+content-type: application/json
+date: Sat, 11 Apr 2026 14:43:39 GMT
+server: railway-edge
+vary: Origin
+vary: Access-Control-Request-Method
+vary: Access-Control-Request-Headers
+x-railway-edge: railway/asia-southeast1-eqsg3a
+x-railway-request-id: wURCAKS3TvOVKh7BipRofQ
+x-railway-cdn-edge: fastly/cache-bom-vanm7210041-BOM
+x-cache: MISS
+x-cache-hits: 0
+x-served-by: cache-bom-vanm7210041-BOM
+
+{"error":"Agent-Nero encountered an internal error: java.util.concurrent.ExecutionException: java.lang.RuntimeException: Failed to invoke Gemini structured call. Reason: Gemini API Error HTTP 404: {\n  \"error\": {\n    \"code\": 404,\n    \"message\": \"models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.\",\n    \"status\": \"NOT_FOUND\"\n  }\n}\n"}

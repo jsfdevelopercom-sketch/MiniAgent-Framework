@@ -14,10 +14,12 @@ public class AgentConfig {
 
     private String openaiApiKey;
     private String geminiApiKey;
+    private String claudeApiKey;
 
     // The topmost default models if the system chooses to fall back or auto-assign.
     private String defaultOpenaiModel = "gpt-4o-mini";
     private String defaultGeminiModel = "gemini-2.5-flash";
+    private String defaultClaudeModel = "claude-3-5-haiku-20241022";
     
     private String topmostAllowedModel = "gpt-4o";
 
@@ -76,6 +78,24 @@ public class AgentConfig {
     }
 
     /**
+     * Retrieves the current Claude API key.
+     * 
+     * @return the string representing the Claude API key
+     */
+    public String getClaudeApiKey() {
+        return claudeApiKey;
+    }
+
+    /**
+     * Sets or updates the Claude API Key on the fly.
+     * 
+     * @param claudeApiKey the new API key
+     */
+    public void setClaudeApiKey(String claudeApiKey) {
+        this.claudeApiKey = claudeApiKey;
+    }
+
+    /**
      * Gets the default OpenAI model to use for worker generation.
      * 
      * @return the model name, e.g., 'gpt-4o-mini'
@@ -110,6 +130,24 @@ public class AgentConfig {
      */
     public void setDefaultGeminiModel(String defaultGeminiModel) {
         this.defaultGeminiModel = defaultGeminiModel;
+    }
+
+    /**
+     * Gets the default Claude model.
+     * 
+     * @return the model name
+     */
+    public String getDefaultClaudeModel() {
+        return defaultClaudeModel;
+    }
+
+    /**
+     * Sets the default Claude model.
+     * 
+     * @param defaultClaudeModel the model name
+     */
+    public void setDefaultClaudeModel(String defaultClaudeModel) {
+        this.defaultClaudeModel = defaultClaudeModel;
     }
 
     /**
