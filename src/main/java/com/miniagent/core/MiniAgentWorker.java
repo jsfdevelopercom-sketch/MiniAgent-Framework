@@ -108,6 +108,22 @@ public class MiniAgentWorker {
     private StructuredResponse parseToStructuredResult(String rawJson) {
         try {
             StructuredResponse response = mapper.readValue(rawJson, StructuredResponse.class);
+            
+            // Failsafe normalization: If summary is empty/null, it means the LLM renamed the key (e.g., 'answer').
+            // To prevent dumping raw JSON onto the frontend, we gracefully extract whatever string it did return.
+            if (response.getSummary() == null || response.getSummary().isBlank()) {
+                com.fasterxml.jackson.databind.JsonNode root = mapper.readTree(rawJson);
+                String fallbackText = "";
+                java.util.Iterator<Map.Entry<String, com.fasterxml.jackson.databind.JsonNode>> fields = root.fields();
+                while (fields.hasNext()) {
+                    Map.Entry<String, com.fasterxml.jackson.databind.JsonNode> field = fields.next();
+                    if (!field.getKey().equals("thought_process") && !field.getKey().equals("convo")) {
+                        fallbackText += field.getValue().asText() + "\n";
+                    }
+                }
+                response.setSummary(fallbackText.trim().isEmpty() ? rawJson : fallbackText.trim());
+            }
+            
             response.setRaw(rawJson);
             return response;
         } catch (Exception e) {

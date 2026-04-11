@@ -87,7 +87,19 @@ public class OpenAiHttpClient {
 
             JsonNode root = mapper.readTree(response.body());
             JsonNode messageNode = root.path("choices").path(0).path("message").path("content");
-            return messageNode.asText();
+            String responseJson = messageNode.asText().trim();
+            if (responseJson.startsWith("```json")) {
+                responseJson = responseJson.substring(7);
+                if (responseJson.endsWith("```")) {
+                    responseJson = responseJson.substring(0, responseJson.length() - 3);
+                }
+            } else if (responseJson.startsWith("```")) {
+                responseJson = responseJson.substring(3);
+                if (responseJson.endsWith("```")) {
+                    responseJson = responseJson.substring(0, responseJson.length() - 3);
+                }
+            }
+            return responseJson.trim();
 
         } catch (Exception e) {
             throw new RuntimeException("Failed to invoke OpenAI structured call.", e);

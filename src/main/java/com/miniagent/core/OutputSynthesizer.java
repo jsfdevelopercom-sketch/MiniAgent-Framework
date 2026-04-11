@@ -46,6 +46,20 @@ public class OutputSynthesizer {
             String formattedJson = openAi.executeStructuredCall("gpt-4o-mini", openaiSys, extractedRaw);
             
             StructuredResponse finalResponse = mapper.readValue(formattedJson, StructuredResponse.class);
+            
+            if (finalResponse.getSummary() == null || finalResponse.getSummary().isBlank()) {
+                com.fasterxml.jackson.databind.JsonNode root = mapper.readTree(formattedJson);
+                String fallbackText = "";
+                java.util.Iterator<java.util.Map.Entry<String, com.fasterxml.jackson.databind.JsonNode>> fields = root.fields();
+                while (fields.hasNext()) {
+                    java.util.Map.Entry<String, com.fasterxml.jackson.databind.JsonNode> field = fields.next();
+                    if (!field.getKey().equals("thought_process") && !field.getKey().equals("convo")) {
+                        fallbackText += field.getValue().asText() + "\n";
+                    }
+                }
+                finalResponse.setSummary(fallbackText.trim().isEmpty() ? formattedJson : fallbackText.trim());
+            }
+
             finalResponse.setRaw(formattedJson);
             return finalResponse;
             
