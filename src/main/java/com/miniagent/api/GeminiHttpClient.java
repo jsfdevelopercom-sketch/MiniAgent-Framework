@@ -65,13 +65,8 @@ public class GeminiHttpClient {
             contents.put("parts", List.of(Map.of("text", combinedText)));
             request.put("contents", List.of(contents));
 
-            // Generation Config for JSON Mode (Use camelCase for v1 REST API)
-            Map<String, Object> generationConfig = new LinkedHashMap<>();
-            generationConfig.put("responseMimeType", "application/json");
-            request.put("generationConfig", generationConfig);
-
             String requestBody = mapper.writeValueAsString(request);
-            String url = "https://generativelanguage.googleapis.com/v1/models/" + targetModel + ":generateContent?key=" + apiKey;
+            String url = "https://generativelanguage.googleapis.com/v1beta/models/" + targetModel + ":generateContent?key=" + apiKey;
 
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(url))
@@ -95,8 +90,19 @@ public class GeminiHttpClient {
                 System.err.println("[GEMINI ERROR] Unexpected response format: " + response.body());
                 throw new RuntimeException("Gemini API returned an unexpected response structure: " + response.body());
             }
-            
-            return textNode.asText();
+            String responseJson = textNode.asText().trim();
+            if (responseJson.startsWith("```json")) {
+                responseJson = responseJson.substring(7);
+                if (responseJson.endsWith("```")) {
+                    responseJson = responseJson.substring(0, responseJson.length() - 3);
+                }
+            } else if (responseJson.startsWith("```")) {
+                responseJson = responseJson.substring(3);
+                if (responseJson.endsWith("```")) {
+                    responseJson = responseJson.substring(0, responseJson.length() - 3);
+                }
+            }
+            return responseJson.trim();
 
         } catch (Exception e) {
             throw new RuntimeException("Failed to invoke Gemini structured call. Reason: " + e.getMessage(), e);
