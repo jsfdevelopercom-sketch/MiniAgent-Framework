@@ -37,6 +37,6 @@ public class TokenCostManager {
      * @return true if the free quota threshold has been exceeded.
      */
     public boolean isQuotaExceeded() {
-        return getCostInInr() >= 1000.0; // Exceeds 1000 Rs
+        return getCostInInr() >= 10.0; // Exceeds 10 Rs
     }
 }

@@ -64,7 +64,7 @@ public class Agent {
 
         try {
             // Hard timeout for Fast Thinking to ensure high speed
-            StructuredResponse response = future.get(5, TimeUnit.SECONDS);
+            StructuredResponse response = future.get(30, TimeUnit.SECONDS);
             updateThought("Fast generation complete in " + (System.currentTimeMillis() - start) + "ms.");
             return response;
         } catch (TimeoutException e) {
@@ -121,8 +121,8 @@ public class Agent {
         });
 
         try {
-            // Max bounds for deep thinking
-            StructuredResponse response = future.get(30, TimeUnit.SECONDS);
+            // Max bounds for deep thinking (Increased significantly to allow AI multiple diagnostic passes)
+            StructuredResponse response = future.get(180, TimeUnit.SECONDS);
             updateThought("Deep generation successfully concluded.");
             return response;
         } catch (TimeoutException e) {
