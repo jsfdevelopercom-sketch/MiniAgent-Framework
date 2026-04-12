@@ -93,7 +93,8 @@ public class MiniAgentClient {
                 domainContext,
                 taskInstructions,
                 dataset,
-                liveInjections
+                liveInjections,
+                java.util.Collections.emptyList()
         );
 
         int loops = 0;
@@ -108,7 +109,8 @@ public class MiniAgentClient {
                     currentDraft.getSummary(),
                     rigidRules,
                     dataset,
-                    liveInjections
+                    liveInjections,
+                    java.util.Collections.emptyList()
             );
 
             // Step 3: Check Halting Conditions

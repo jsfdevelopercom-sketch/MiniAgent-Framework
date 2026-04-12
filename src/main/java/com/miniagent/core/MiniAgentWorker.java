@@ -54,10 +54,11 @@ public class MiniAgentWorker {
             String domainContext,
             String taskInstructions,
             Map<String, Object> dataset,
-            List<String> liveInjections
+            List<String> liveInjections,
+            List<Map<String, String>> history
     ) {
         String sysPrompt = promptFactory.buildWorkerSystemPrompt(domainContext);
-        String userPrompt = promptFactory.buildWorkerUserPrompt(taskInstructions, dataset, liveInjections);
+        String userPrompt = promptFactory.buildWorkerUserPrompt(taskInstructions, dataset, liveInjections, history);
 
         String rawJson;
         if (model != null && model.toLowerCase().startsWith("gemini")) {

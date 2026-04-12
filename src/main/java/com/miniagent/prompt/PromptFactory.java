@@ -40,8 +40,9 @@ public class PromptFactory {
      * @param liveInjections Instructions dynamically added mid-way that MUST be addressed.
      * @return The formatted User prompt.
      */
-    public String buildWorkerUserPrompt(String taskInstructions, Map<String, Object> dataset, List<String> liveInjections) {
+    public String buildWorkerUserPrompt(String taskInstructions, Map<String, Object> dataset, List<String> liveInjections, List<Map<String, String>> history) {
         return joinSections(
+                "RECENT CONVERSATION HISTORY", historyToText(history),
                 "TASK", taskInstructions,
                 "LIVE INJECTIONS (MUST FOLLOW)", bullets(liveInjections),
                 "DATASET", mapToText(dataset)
@@ -89,8 +90,9 @@ public class PromptFactory {
      * @param liveInjections Mid-way instructions. If missing from the draft, score drops drastically.
      * @return The formatted Evaluator user prompt.
      */
-    public String buildEvaluatorUserPrompt(String draft, List<String> rules, Map<String, Object> dataset, List<String> liveInjections) {
+    public String buildEvaluatorUserPrompt(String draft, List<String> rules, Map<String, Object> dataset, List<String> liveInjections, List<Map<String, String>> history) {
         return joinSections(
+                "RECENT CONVERSATION HISTORY", historyToText(history),
                 "WORKER DRAFT OUTPUT", draft,
                 "RIGID RULES & STRUCTURE", bullets(rules),
                 "LIVE INJECTIONS REQUIRED", bullets(liveInjections),
@@ -98,8 +100,9 @@ public class PromptFactory {
                 "EVALUATION CRITERIA", joinLines(
                         "1. Identify pure hallucinations or facts unsupported by the DATASET (Factuality).",
                         "2. Ensure all RIGID RULES are followed verbatim (Structure).",
-                        "3. Ensure the tone is appropriate (Style).",
-                        "4. CRITICAL: If ANY item in LIVE INJECTIONS is ignored, the INSTRUCTION_ADHERENCE_SCORE must be below 50, and you must explicitly list it in MISSING_INSTRUCTIONS."
+                        "3. Ensure the tone is appropriate for the context (Style).",
+                        "4. Ensure conversational continuity is strictly maintained against the RECENT CONVERSATION HISTORY.",
+                        "5. CRITICAL: If ANY item in LIVE INJECTIONS is ignored, the INSTRUCTION_ADHERENCE_SCORE must be below 50, and you must explicitly list it in MISSING_INSTRUCTIONS."
                 )
         );
     }
@@ -206,6 +209,21 @@ public class PromptFactory {
         return map.entrySet().stream()
                 .map(entry -> entry.getKey() + "=" + String.valueOf(entry.getValue()))
                 .collect(Collectors.joining("\n"));
+    }
+
+    /**
+     * Translates structured chat arrays into elegant readable Markdown dialog flows.
+     */
+    private String historyToText(List<Map<String, String>> history) {
+        if (history == null || history.isEmpty()) {
+            return "No previous context. This is the start of the conversation.";
+        }
+        return history.stream()
+                .map(msg -> {
+                    String role = "user".equalsIgnoreCase(msg.getOrDefault("role", "")) ? "User" : "Agent Nero";
+                    return role + ": " + msg.getOrDefault("content", "");
+                })
+                .collect(Collectors.joining("\n\n"));
     }
 
     /**

@@ -41,7 +41,7 @@ public class Agent {
      * Think Fast: Limits response times using timeouts, providing a quick generation
      * without deep recursive loops. Best for simple chatting.
      */
-    public StructuredResponse thinkFast(String model, String userQuery) {
+    public StructuredResponse thinkFast(String model, String userQuery, Map<String, Object> memoryDataset, List<Map<String, String>> history) {
         updateThought("Parsing quick query for immediate response...");
         long start = System.currentTimeMillis();
 
@@ -51,8 +51,9 @@ public class Agent {
                 model, 
                 "You are an assistant. Answer concisely and quickly.",
                 userQuery, 
-                Collections.emptyMap(), 
-                Collections.emptyList()
+                memoryDataset, 
+                Collections.emptyList(),
+                history
             );
             
             // Increment mock tokens based on response length for cost tracking
@@ -83,7 +84,7 @@ public class Agent {
      * Think Deep: Uses recursive evaluation to improve output quality, simulating a
      * multi-agent committee (CEO, Researcher, Generator, Evaluator).
      */
-    public StructuredResponse thinkDeep(String model, String userQuery, Map<String, Object> memoryDataset) {
+    public StructuredResponse thinkDeep(String model, String userQuery, Map<String, Object> memoryDataset, List<Map<String, String>> history) {
         updateThought("CEO analyzing deep request context...");
         
         CompletableFuture<StructuredResponse> future = CompletableFuture.supplyAsync(() -> {
@@ -95,7 +96,8 @@ public class Agent {
                 "You are an expert deep analyst. Provide high-quality profound insights.",
                 userQuery, 
                 memoryDataset, 
-                Collections.emptyList()
+                Collections.emptyList(),
+                history
             );
             costManager.addUsage(userQuery.length() / 4, draft.getSummary().length() / 4);
 

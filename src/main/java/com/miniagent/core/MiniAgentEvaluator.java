@@ -51,10 +51,11 @@ public class MiniAgentEvaluator {
             String draft,
             List<String> rigidRules,
             Map<String, Object> dataset,
-            List<String> liveInjections
+            List<String> liveInjections,
+            List<Map<String, String>> history
     ) {
         String sysPrompt = promptFactory.buildEvaluatorSystemPrompt();
-        String userPrompt = promptFactory.buildEvaluatorUserPrompt(draft, rigidRules, dataset, liveInjections);
+        String userPrompt = promptFactory.buildEvaluatorUserPrompt(draft, rigidRules, dataset, liveInjections, history);
 
         String rawTextOutput;
         if (useGemini) {
