@@ -154,4 +154,64 @@ public class OpenAiHttpClient {
             throw new RuntimeException("Failed to invoke OpenAI text call.", e);
         }
     }
+
+    /**
+     * Executes an ultra-fast raw multi-part HTTP mapping to OpenAI's Whisper API.
+     * We sidestep heavy library dependencies by natively formulating the multipart MIME
+     * boundaries allowing lightning-fast audio string chunk deliveries straight out of
+     * the user's WebRTC device flow directly up to GPT transcription models.
+     * 
+     * @param audioBytes the pure raw audio payload from the navigator blob
+     * @param apiKey user token or BYOT
+     * @param filename generated browser filename so OpenAI infers container mapping correctly
+     * @return Transcribed layout text mapped out
+     */
+    public static String executeWhisperTranscription(byte[] audioBytes, String apiKey, String filename) throws Exception {
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalArgumentException("Cannot execute Whisper audio without OpenAI authentication layout.");
+        }
+        
+        // Random secure string boundary logic
+        String boundary = "----AgentNeroVoiceBoundary" + System.currentTimeMillis();
+        
+        StringBuilder headerBuilder = new StringBuilder();
+        headerBuilder.append("--").append(boundary).append("\r\n");
+        headerBuilder.append("Content-Disposition: form-data; name=\"file\"; filename=\"").append(filename).append("\"\r\n");
+        // We tell whisper we are shipping standard secure audio containers 
+        headerBuilder.append("Content-Type: application/octet-stream\r\n\r\n"); 
+        
+        byte[] headerBytes = headerBuilder.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        
+        StringBuilder formPadding = new StringBuilder();
+        formPadding.append("\r\n--").append(boundary).append("\r\n");
+        formPadding.append("Content-Disposition: form-data; name=\"model\"\r\n\r\n");
+        // Open AI's voice processing endpoint runs precisely off the whisper-1 architectural name mapping
+        formPadding.append("whisper-1\r\n"); 
+        formPadding.append("--").append(boundary).append("--\r\n");
+        
+        byte[] footerBytes = formPadding.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        
+        // Aggregate payload size directly saving buffer allocations
+        byte[] multipartBody = new byte[headerBytes.length + audioBytes.length + footerBytes.length];
+        System.arraycopy(headerBytes, 0, multipartBody, 0, headerBytes.length);
+        System.arraycopy(audioBytes, 0, multipartBody, headerBytes.length, audioBytes.length);
+        System.arraycopy(footerBytes, 0, multipartBody, headerBytes.length + audioBytes.length, footerBytes.length);
+        
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("https://api.openai.com/v1/audio/transcriptions"))
+                .header("Authorization", "Bearer " + apiKey)
+                .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                .timeout(Duration.ofSeconds(60)) // Allow slightly longer for heavy uploads
+                .POST(HttpRequest.BodyPublishers.ofByteArray(multipartBody))
+                .build();
+                
+        HttpResponse<String> response = HttpClient.newBuilder().build().send(request, HttpResponse.BodyHandlers.ofString());
+        
+        if (response.statusCode() >= 400) {
+            throw new RuntimeException("Whisper Engine Rejected Upload: " + response.statusCode() + " " + response.body());
+        }
+        
+        // Return pure text resolution block natively
+        return new ObjectMapper().readTree(response.body()).path("text").asText();
+    }
 }
