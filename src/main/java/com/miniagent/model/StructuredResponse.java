@@ -13,6 +13,7 @@ public class StructuredResponse {
 
     private String thought_process;
     private String summary;
+    private String spoken_summary;
     private String convo;
     
     private String raw;
@@ -37,6 +38,17 @@ public class StructuredResponse {
 
     public void setSummary(String summary) {
         this.summary = summary;
+    }
+
+    /**
+     * Gets the condensed, first-person voiceover script designed specifically for audio TTS dictation.
+     */
+    public String getSpoken_summary() {
+        return spoken_summary;
+    }
+
+    public void setSpoken_summary(String spoken_summary) {
+        this.spoken_summary = spoken_summary;
     }
 
     /**

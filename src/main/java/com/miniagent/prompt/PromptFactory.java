@@ -167,8 +167,16 @@ public class PromptFactory {
                 "You are a strict formatting parser.",
                 "Your job is to format the provided text flawlessly into a JSON schema.",
                 "If the content contains code, you MUST wrap it in a proper Markdown code block (e.g., ```java) so it renders as a scrollable code card.",
-                "Do NOT add conversational elements. Do NOT add meta-text.",
-                "Fill the 'summary' field with the beautifully formatted markdown. Leave 'thought_process' completely blank. Leave 'convo' completely blank."
+                "Do NOT add conversational elements to the 'summary'. Do NOT add meta-text.",
+                "Fill the 'summary' field with the beautifully formatted markdown. Leave 'thought_process' completely blank. Leave 'convo' completely blank.",
+                "",
+                "CRITICAL: We have a Text-to-Speech engine. You MUST generate a 'spoken_summary' string designed to be spoken aloud.",
+                "The 'spoken_summary' must act as a human-like, first-person (Agent Nero) shorthand of the 'summary' field.",
+                "If 'summary' contains huge code blocks or lists, 'spoken_summary' must NOT read them verbatim. Instead, playfully summarize them.",
+                "Example 1: If summary has a massive Python script for Hello World:",
+                "  spoken_summary: 'I have generated the code for hello world, you can read it here on screen. The code comprises of a class definition and a main function.'",
+                "Example 2: If the summary is a short greeting:",
+                "  spoken_summary: 'Hello! How can I assist you today?'"
         );
     }
 

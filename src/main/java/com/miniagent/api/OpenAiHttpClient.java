@@ -214,4 +214,43 @@ public class OpenAiHttpClient {
         // Return pure text resolution block natively
         return new ObjectMapper().readTree(response.body()).path("text").asText();
     }
+
+    /**
+     * Executes an immediate streaming-compatible HTTP POST to the OpenAI TTS generator.
+     * Maps precisely to the tts-1 model for extreme latency optimizations mapping natively to the
+     * audio byte payload formats.
+     * 
+     * @param text The humanized summary text for Agent Nero to speak.
+     * @param voice The requested OpenAI voice (alloy, echo, fable, onyx, nova, shimmer).
+     * @param apiKey The active user token or server BYOT.
+     * @return Raw binary audio layer (MP3 format natively by default).
+     */
+    public static byte[] executeSpeechSynthesis(String text, String voice, String apiKey) throws Exception {
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalArgumentException("Cannot execute Speech Synthesis audio without OpenAI authentication layout.");
+        }
+        
+        Map<String, Object> payload = new java.util.HashMap<>();
+        payload.put("model", "tts-1");
+        payload.put("input", text);
+        payload.put("voice", voice != null && !voice.isBlank() ? voice : "alloy");
+        
+        String requestBody = new ObjectMapper().writeValueAsString(payload);
+        
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("https://api.openai.com/v1/audio/speech"))
+                .header("Authorization", "Bearer " + apiKey)
+                .header("Content-Type", "application/json")
+                .timeout(Duration.ofSeconds(30))
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                .build();
+                
+        HttpResponse<byte[]> response = HttpClient.newBuilder().build().send(request, HttpResponse.BodyHandlers.ofByteArray());
+        
+        if (response.statusCode() >= 400) {
+            throw new RuntimeException("TTS Engine Rejected Payload: " + response.statusCode() + " " + new String(response.body(), java.nio.charset.StandardCharsets.UTF_8));
+        }
+        
+        return response.body();
+    }
 }
