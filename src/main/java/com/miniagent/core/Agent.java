@@ -44,19 +44,26 @@ public class Agent {
      * Think Fast: Limits response times using timeouts, providing a quick generation
      * without deep recursive loops. Best for simple chatting.
      */
-    public StructuredResponse thinkFast(String model, String userQuery, Map<String, Object> memoryDataset, List<Map<String, String>> history, String userId) {
+    public StructuredResponse thinkFast(String model, String userQuery, Map<String, Object> memoryDataset, List<Map<String, String>> history, String userId, Double temperature) {
         updateThought("Parsing quick query for immediate response...");
         long start = System.currentTimeMillis();
 
         CompletableFuture<StructuredResponse> future = CompletableFuture.supplyAsync(() -> {
             updateThought("Dispatching Fast Agent to generate draft...");
+            String personaModifier = "";
+            if (temperature != null) {
+                if (temperature <= 0.3) personaModifier = " Output MUST be exceptionally professional, structured, and clinical.";
+                else if (temperature >= 1.2) personaModifier = " Output MUST be playful, cheeky, risky, and highly experimental depending on context.";
+            }
+
             StructuredResponse resp = worker.generateDraft(
                 model, 
-                "You are an assistant. Answer concisely and quickly.",
+                "You are an assistant. Answer concisely and quickly." + personaModifier,
                 userQuery, 
                 memoryDataset, 
                 Collections.emptyList(),
-                history
+                history,
+                temperature
             );
             // Increment mock tokens based on response length for cost tracking
             int estimatedTokens = Math.max(10, userQuery.length() / 4 + resp.getSummary().length() / 4);
@@ -67,8 +74,8 @@ public class Agent {
         });
 
         try {
-            // Hard timeout for Fast Thinking to ensure high speed
-            StructuredResponse response = future.get(30, TimeUnit.SECONDS);
+            // Hard timeout for Fast Thinking appropriately bumped for Synthesizer double-hops
+            StructuredResponse response = future.get(60, TimeUnit.SECONDS);
             updateThought("Fast generation complete in " + (System.currentTimeMillis() - start) + "ms.");
             return response;
         } catch (TimeoutException e) {
@@ -88,7 +95,7 @@ public class Agent {
      * multi-agent committee (CEO, Researcher, Generator, Evaluator).
      * This incorporates a genuine Reflection loop where the Critic's errors are passed back.
      */
-    public StructuredResponse thinkDeep(String model, String userQuery, Map<String, Object> memoryDataset, List<Map<String, String>> history, String userId) {
+    public StructuredResponse thinkDeep(String model, String userQuery, Map<String, Object> memoryDataset, List<Map<String, String>> history, String userId, Double temperature) {
         updateThought("CEO analyzing deep request context...");
         
         CompletableFuture<StructuredResponse> future = CompletableFuture.supplyAsync(() -> {
@@ -104,15 +111,22 @@ public class Agent {
                 synthesizerModel = "gpt-4o"; // Native GPT for flawless UI/UX Markdown mapping
             }
 
+            String personaModifier = "";
+            if (temperature != null) {
+                if (temperature <= 0.3) personaModifier = " Output MUST be exceptionally professional, structured, and clinical.";
+                else if (temperature >= 1.2) personaModifier = " Output MUST be playful, cheeky, risky, and highly experimental depending on context.";
+            }
+
             // Phase 1: Initial Generation
             updateThought("CEO assigned Generator MiniAgent (" + generatorModel + ") to create initial comprehensive draft.");
             StructuredResponse draft = worker.generateDraft(
                 generatorModel, 
-                "You are an expert deep analyst. Provide high-quality profound insights.",
+                "You are an expert deep analyst. Provide high-quality profound insights." + personaModifier,
                 userQuery, 
                 memoryDataset, 
                 Collections.emptyList(),
-                history
+                history,
+                temperature
             );
             costManager.addUsage(userId, userQuery.length() / 4, draft.getSummary().length() / 4);
 
@@ -162,7 +176,7 @@ public class Agent {
 
         try {
             // Max bounds for deep thinking strictly expanded 
-            StructuredResponse response = future.get(180, TimeUnit.SECONDS);
+            StructuredResponse response = future.get(240, TimeUnit.SECONDS);
             updateThought("Deep generation Reflexion logic successfully concluded.");
             return response;
         } catch (TimeoutException e) {

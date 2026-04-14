@@ -27,13 +27,13 @@ public class ClaudeHttpClient {
     }
 
     public String executeStructuredCall(String model, String systemPrompt, String userPrompt) {
-        return executeStructuredCall(model, systemPrompt, userPrompt, null);
+        return executeStructuredCall(model, systemPrompt, userPrompt, null, null);
     }
 
     /**
      * Executes a call expecting a structured JSON response.
      */
-    public String executeStructuredCall(String model, String systemPrompt, String userPrompt, Double temperature) {
+    public String executeStructuredCall(String model, String systemPrompt, String userPrompt, Double temperature, List<Map<String, String>> history) {
         String apiKey = config.getClaudeApiKey();
         if (apiKey == null || apiKey.isBlank()) {
             throw new RuntimeException("Claude API key is not configured.");
@@ -47,6 +47,14 @@ public class ClaudeHttpClient {
             if (temperature != null) request.put("temperature", temperature);
 
             List<Map<String, Object>> messages = new ArrayList<>();
+            if (history != null) {
+                for (Map<String, String> hc : history) {
+                    messages.add(Map.of(
+                        "role", "user".equalsIgnoreCase(hc.getOrDefault("role", "")) ? "user" : "assistant",
+                        "content", hc.getOrDefault("content", "")
+                    ));
+                }
+            }
             messages.add(Map.of(
                 "role", "user",
                 "content", userPrompt + "\n\nRETURN ONLY VALID JSON. Start your response with { and end with }."

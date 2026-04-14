@@ -41,7 +41,7 @@ public class OpenAiHttpClient {
     }
 
     public String executeStructuredCall(String model, String systemPrompt, String userPrompt) {
-        return executeStructuredCall(model, systemPrompt, userPrompt, null);
+        return executeStructuredCall(model, systemPrompt, userPrompt, null, null);
     }
 
     /**
@@ -54,7 +54,7 @@ public class OpenAiHttpClient {
      * @return Raw JSON output text expected to map strictly to StructuredResponse
      * @throws RuntimeException if network or authentication fails
      */
-    public String executeStructuredCall(String model, String systemPrompt, String userPrompt, Double temperature) {
+    public String executeStructuredCall(String model, String systemPrompt, String userPrompt, Double temperature, List<Map<String, String>> history) {
         String apiKey = config.getOpenaiApiKey();
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException("OpenAI API key is missing from AgentConfig.");
@@ -66,10 +66,17 @@ public class OpenAiHttpClient {
             request.put("model", model != null ? model : config.getDefaultOpenaiModel());
             if (temperature != null) request.put("temperature", temperature);
             
-            List<Map<String, String>> messages = List.of(
-                    Map.of("role", "system", "content", systemPrompt),
-                    Map.of("role", "user", "content", userPrompt)
-            );
+            List<Map<String, String>> messages = new java.util.ArrayList<>();
+            messages.add(Map.of("role", "system", "content", systemPrompt));
+            if (history != null) {
+                for (Map<String, String> h : history) {
+                    messages.add(Map.of(
+                        "role", "user".equalsIgnoreCase(h.getOrDefault("role", "")) ? "user" : "assistant",
+                        "content", h.getOrDefault("content", "")
+                    ));
+                }
+            }
+            messages.add(Map.of("role", "user", "content", userPrompt));
             request.put("messages", messages);
 
             // Force JSON object mode

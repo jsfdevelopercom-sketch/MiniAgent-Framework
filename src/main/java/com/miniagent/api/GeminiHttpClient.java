@@ -41,7 +41,7 @@ public class GeminiHttpClient {
     }
 
     public String executeStructuredCall(String model, String systemPrompt, String userPrompt) {
-        return executeStructuredCall(model, systemPrompt, userPrompt, null);
+        return executeStructuredCall(model, systemPrompt, userPrompt, null, null);
     }
 
     /**
@@ -51,9 +51,10 @@ public class GeminiHttpClient {
      * @param systemPrompt the system-level guidelines
      * @param userPrompt the specific user tasks
      * @param temperature the logical temperature randomness parameter (optional)
+     * @param history the raw conversational mapping arrays
      * @return the raw JSON generated output
      */
-    public String executeStructuredCall(String model, String systemPrompt, String userPrompt, Double temperature) {
+    public String executeStructuredCall(String model, String systemPrompt, String userPrompt, Double temperature, List<Map<String, String>> history) {
         String apiKey = config.getGeminiApiKey();
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException("Gemini API key is missing from AgentConfig.");
@@ -69,12 +70,24 @@ public class GeminiHttpClient {
             try {
                 Map<String, Object> request = new LinkedHashMap<>();
 
-                // Contents
-                Map<String, Object> contents = new LinkedHashMap<>();
-                contents.put("role", "user");
-                String combinedText = "SYSTEM INSTRUCTION:\n" + systemPrompt + "\n\nUSER PROMPT:\n" + userPrompt;
-                contents.put("parts", List.of(Map.of("text", combinedText)));
-                request.put("contents", List.of(contents));
+                // Native Contents Mapping (Replaces arbitrary string injection)
+                List<Map<String, Object>> contentsList = new ArrayList<>();
+                if (history != null) {
+                    for (Map<String, String> h : history) {
+                        String role = "user".equalsIgnoreCase(h.get("role")) ? "user" : "model";
+                        contentsList.add(Map.of(
+                            "role", role, 
+                            "parts", List.of(Map.of("text", h.getOrDefault("content", "")))
+                        ));
+                    }
+                }
+                
+                // Final Prompt Payload
+                contentsList.add(Map.of(
+                    "role", "user", 
+                    "parts", List.of(Map.of("text", "SYSTEM INSTRUCTION:\n" + systemPrompt + "\n\nUSER PROMPT:\n" + userPrompt))
+                ));
+                request.put("contents", contentsList);
                 
                 // Force strict JSON output generation for supported v1beta models
                 Map<String, Object> genConfig = new LinkedHashMap<>();

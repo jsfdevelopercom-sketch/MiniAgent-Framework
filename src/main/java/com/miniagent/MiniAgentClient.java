@@ -94,7 +94,8 @@ public class MiniAgentClient {
                 taskInstructions,
                 dataset,
                 liveInjections,
-                java.util.Collections.emptyList()
+                java.util.Collections.emptyList(),
+                null
         );
 
         int loops = 0;

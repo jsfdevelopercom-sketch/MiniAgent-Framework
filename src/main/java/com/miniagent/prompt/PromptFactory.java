@@ -46,9 +46,8 @@ public class PromptFactory {
      * @param liveInjections Instructions dynamically added mid-way that MUST be addressed.
      * @return The formatted User prompt.
      */
-    public String buildWorkerUserPrompt(String taskInstructions, Map<String, Object> dataset, List<String> liveInjections, List<Map<String, String>> history) {
+    public String buildWorkerUserPrompt(String taskInstructions, Map<String, Object> dataset, List<String> liveInjections) {
         return joinSections(
-                "RECENT CONVERSATION HISTORY", historyToText(history),
                 "TASK", taskInstructions,
                 "LIVE INJECTIONS (MUST FOLLOW)", bullets(liveInjections),
                 "DATASET", mapToText(dataset)
@@ -107,7 +106,7 @@ public class PromptFactory {
                         "1. Identify pure hallucinations or facts unsupported by the DATASET (Factuality).",
                         "2. Ensure all RIGID RULES are followed verbatim (Structure).",
                         "3. Ensure the tone is appropriate for the context (Style).",
-                        "4. Ensure conversational continuity is strictly maintained against the RECENT CONVERSATION HISTORY.",
+                        "4. Ensure conversational continuity is strictly maintained against the history.",
                         "5. CRITICAL: If ANY item in LIVE INJECTIONS is ignored, the INSTRUCTION_ADHERENCE_SCORE must be below 50, and you must explicitly list it in MISSING_INSTRUCTIONS."
                 )
         );
@@ -219,7 +218,7 @@ public class PromptFactory {
     }
 
     /**
-     * Translates structured chat arrays into elegant readable Markdown dialog flows.
+     * Translates structured chat arrays into elegant readable Markdown dialog flows for the Evaluator Observer.
      */
     private String historyToText(List<Map<String, String>> history) {
         if (history == null || history.isEmpty()) {

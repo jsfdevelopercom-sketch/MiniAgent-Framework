@@ -55,18 +55,19 @@ public class MiniAgentWorker {
             String taskInstructions,
             Map<String, Object> dataset,
             List<String> liveInjections,
-            List<Map<String, String>> history
+            List<Map<String, String>> history,
+            Double temperature
     ) {
         String sysPrompt = promptFactory.buildWorkerSystemPrompt(domainContext, model);
-        String userPrompt = promptFactory.buildWorkerUserPrompt(taskInstructions, dataset, liveInjections, history);
+        String userPrompt = promptFactory.buildWorkerUserPrompt(taskInstructions, dataset, liveInjections);
 
         String rawJson;
         if (model != null && model.toLowerCase().startsWith("gemini")) {
-            rawJson = geminiHttpClient.executeStructuredCall(model, sysPrompt, userPrompt);
+            rawJson = geminiHttpClient.executeStructuredCall(model, sysPrompt, userPrompt, temperature, history);
         } else if (model != null && model.toLowerCase().startsWith("claude")) {
-            rawJson = claudeHttpClient.executeStructuredCall(model, sysPrompt, userPrompt);
+            rawJson = claudeHttpClient.executeStructuredCall(model, sysPrompt, userPrompt, temperature, history);
         } else {
-            rawJson = openAiHttpClient.executeStructuredCall(model, sysPrompt, userPrompt);
+            rawJson = openAiHttpClient.executeStructuredCall(model, sysPrompt, userPrompt, temperature, history);
         }
         return parseToStructuredResult(rawJson);
     }
