@@ -23,6 +23,35 @@ public class AgentConfig {
     
     private String topmostAllowedModel = "gpt-4o";
 
+    // --- Claude Models ---
+    private String claudeOpus46 = "claude-opus-4-6";
+    private String claudeSonnet46 = "claude-sonnet-4-6";
+    private String claudeHaiku45 = "claude-haiku-4-5-20251001";
+
+    // --- Gemini Models ---
+    private String gemini31Pro = "gemini-3.1-pro-preview";
+    private String gemini3Flash = "gemini-3-flash-preview";
+    private String gemini31FlashLite = "gemini-3.1-flash-lite-preview";
+    private String gemini25Pro = "gemini-2.5-pro";
+    private String gemini25Flash = "gemini-2.5-flash";
+    private String gemini25FlashLite = "gemini-2.5-flash-lite";
+
+    // --- Gemini Specialty Models ---
+    private String geminiNanoBanana2 = "gemini-3.1-flash-image-preview";
+    private String geminiNanoBananaPro = "gemini-3-pro-image-preview";
+    private String geminiNanoBanana = "gemini-2.5-flash-image";
+    private String gemini31Live = "gemini-3.1-flash-live-preview";
+    private String gemini25Live = "gemini-2.5-flash-native-audio-preview-12-2025";
+    private String geminiDeepResearch = "deep-research-pro-preview-12-2025";
+    private String geminiVeo31 = "veo-3.1-generate-preview";
+    private String geminiLyria3Pro = "lyria-3-pro-preview";
+
+    // --- GPT Models ---
+    private String gpt4o = "gpt-4o";
+    private String gpt4oMini = "gpt-4o-mini";
+    private String o1Preview = "o1-preview";
+    private String o1Mini = "o1-mini";
+
     /**
      * Default constructor for AgentConfig.
      * API Keys should be injected post-instantiation or via overloaded constructor.

@@ -40,16 +40,21 @@ public class OpenAiHttpClient {
                 .build();
     }
 
+    public String executeStructuredCall(String model, String systemPrompt, String userPrompt) {
+        return executeStructuredCall(model, systemPrompt, userPrompt, null);
+    }
+
     /**
      * Executes a generative call forcing the strict JSON output schema.
      * 
      * @param model the model to run (e.g., gpt-4o-mini)
      * @param systemPrompt the system-level behavior directive
      * @param userPrompt the task-level data
+     * @param temperature randomness logic for GD overrides
      * @return Raw JSON output text expected to map strictly to StructuredResponse
      * @throws RuntimeException if network or authentication fails
      */
-    public String executeStructuredCall(String model, String systemPrompt, String userPrompt) {
+    public String executeStructuredCall(String model, String systemPrompt, String userPrompt, Double temperature) {
         String apiKey = config.getOpenaiApiKey();
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException("OpenAI API key is missing from AgentConfig.");
@@ -59,6 +64,7 @@ public class OpenAiHttpClient {
             // Using /v1/chat/completions as it supports structured JSON outputs reliably
             Map<String, Object> request = new LinkedHashMap<>();
             request.put("model", model != null ? model : config.getDefaultOpenaiModel());
+            if (temperature != null) request.put("temperature", temperature);
             
             List<Map<String, String>> messages = List.of(
                     Map.of("role", "system", "content", systemPrompt),
@@ -106,15 +112,20 @@ public class OpenAiHttpClient {
         }
     }
 
+    public String executeTextCall(String model, String systemPrompt, String userPrompt) {
+        return executeTextCall(model, systemPrompt, userPrompt, null);
+    }
+
     /**
      * Executes a simple text-to-text generative call (often used by Evaluators).
      * 
      * @param model the underlying model
      * @param systemPrompt system directive
      * @param userPrompt task data
+     * @param temperature specific variability override for the GD room persona
      * @return The plain text output
      */
-    public String executeTextCall(String model, String systemPrompt, String userPrompt) {
+    public String executeTextCall(String model, String systemPrompt, String userPrompt, Double temperature) {
         String apiKey = config.getOpenaiApiKey();
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException("OpenAI API key is missing from AgentConfig.");
@@ -123,6 +134,7 @@ public class OpenAiHttpClient {
         try {
             Map<String, Object> request = new LinkedHashMap<>();
             request.put("model", model != null ? model : config.getDefaultOpenaiModel());
+            if (temperature != null) request.put("temperature", temperature);
             
             List<Map<String, String>> messages = List.of(
                     Map.of("role", "system", "content", systemPrompt),

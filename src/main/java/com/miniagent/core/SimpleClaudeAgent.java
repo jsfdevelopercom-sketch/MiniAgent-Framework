@@ -1,0 +1,41 @@
+package com.miniagent.core;
+
+import com.miniagent.api.ClaudeHttpClient;
+import com.miniagent.model.StructuredResponse;
+import com.miniagent.prompt.PromptFactory;
+
+/**
+ * A direct, un-orchestrated Claude Agent bypassing the Critic loop for the GD Room.
+ * Uses a conversational system prompt.
+ */
+public class SimpleClaudeAgent {
+
+    private final ClaudeHttpClient client;
+    private final PromptFactory promptFactory;
+
+    public SimpleClaudeAgent(ClaudeHttpClient client, PromptFactory promptFactory) {
+        this.client = client;
+        this.promptFactory = promptFactory;
+    }
+
+    public StructuredResponse respond(String userQuery, String apiKeyOverride, Double temperature) {
+        String sysPrompt = "You are Claude, an AI built by Anthropic. You are participating in a group discussion room. " +
+                           "Keep your response nuanced, thoughtful, conversational, and strictly under 100 words. " +
+                           "If what you want to say has already been thoroughly covered by other agents, " +
+                           "or if you have absolutely nothing novel to add, reply EXACTLY with the word [SILENCE]. " +
+                           "Do not use markdown headers, just speak naturally to the user and the group.";
+        String userPrompt = "Here is the user's query and the discussion history so far:\n" + userQuery;
+
+        try {
+            String rawOutput = client.executeTextCall("claude-haiku-4-5-20251001", sysPrompt, userPrompt, temperature);
+            StructuredResponse response = new StructuredResponse();
+            response.setSummary(rawOutput);
+            response.setRaw(rawOutput);
+            return response;
+        } catch (Exception e) {
+            StructuredResponse err = new StructuredResponse();
+            err.setSummary("Claude encountered a disruption.");
+            return err;
+        }
+    }
+}

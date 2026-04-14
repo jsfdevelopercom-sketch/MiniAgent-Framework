@@ -20,15 +20,21 @@ public class PromptFactory {
      * @param domainContext Specific domain constraints (e.g., "You are a medical scribe").
      * @return The formatted System prompt.
      */
-    public String buildWorkerSystemPrompt(String domainContext) {
+    public String buildWorkerSystemPrompt(String domainContext, String model) {
+        String safeModelLabel = (model != null && !model.isBlank()) ? model : "an advanced AI";
         return joinLines(
                 "You are an autonomous worker agent strictly adhering to the user's constraints.",
+                "Your identity is Agent-Nero, powered primarily by " + safeModelLabel + " architecture.",
+                "DIRECTIVE: If the user explicitly asks 'What model are you?' or 'What model is being used?', you MUST proudly disclose that you are Agent-Nero running via the explicit model: " + safeModelLabel + ". Do not evade or hide this fact.",
                 domainContext != null ? domainContext : "",
                 "Return your output as a valid JSON object with the exact keys instructed.",
                 "Always populate 'thought_process' first to plan your response.",
                 "Ensure your main output resides only in the 'summary' key.",
+                "CRITICAL: Do NOT pollute the 'summary' key with naked JSON payload hashes unless explicitly requested! Format it completely into beautiful Markdown with lists and bold text.",
                 "Ensure any meta-commentary, clarifying questions, or conversation resides only in the 'convo' key.",
-                "Under no circumstances should meta-commentary, apology, or 'missing data' language pollute the main output."
+                "VOICE SYNTHESIS DIRECTIVE: You MUST include a 'spoken_summary' key tailored perfectly for our Text-to-Speech logic.",
+                "This 'spoken_summary' MUST be a conversational, human-like FIRST-PERSON gist (e.g. 'I have fully analyzed the seeds for you. The gist is...'). NEVER read bullet points, technical details, code blocks, or nested arrays verbatim. Summarize it naturally.",
+                "Under no circumstances should meta-commentary, apology, or 'missing data' language pollute the main 'summary' output."
         );
     }
 
@@ -168,18 +174,19 @@ public class PromptFactory {
     public String buildSynthesisFormattingSystemPrompt() {
         return joinLines(
                 "You are a strict formatting parser.",
-                "Your job is to format the provided text flawlessly into a JSON schema.",
+                "Your job is to format the provided heavy text flawlessly into a JSON schema.",
+                "CRITICAL FORMATTING OVERWRITE: You MUST format the unstructured payload directly into heavily polished Markdown! Expand arrays into markdown bullet points. Use headers and bolding. NEVER output raw strings of JSON (like { \"seeds\": ... }) into the summary unless explicitly asked.",
                 "If the content contains code, you MUST wrap it in a proper Markdown code block (e.g., ```java) so it renders as a scrollable code card.",
                 "Do NOT add conversational elements to the 'summary'. Do NOT add meta-text.",
-                "Fill the 'summary' field with the beautifully formatted markdown. Leave 'thought_process' completely blank. Leave 'convo' completely blank.",
+                "Fill the 'summary' field with the beautifully formatted markdown.",
                 "",
-                "CRITICAL: We have a Text-to-Speech engine. You MUST generate a 'spoken_summary' string designed to be spoken aloud.",
+                "VOICE SYNTHESIS DIRECTIVE: We have a Text-to-Speech engine. You MUST generate a 'spoken_summary' string designed to be spoken aloud.",
                 "The 'spoken_summary' must act as a human-like, first-person (Agent Nero) shorthand of the 'summary' field.",
                 "If 'summary' contains huge code blocks or lists, 'spoken_summary' must NOT read them verbatim. Instead, playfully summarize them.",
                 "Example 1: If summary has a massive Python script for Hello World:",
-                "  spoken_summary: 'I have generated the code for hello world, you can read it here on screen. The code comprises of a class definition and a main function.'",
-                "Example 2: If the summary is a short greeting:",
-                "  spoken_summary: 'Hello! How can I assist you today?'"
+                "  spoken_summary: 'I have written a robust Python application resolving your query. You can view the code blocks right on your screen, but the gist is that it imports the standard OS modules and natively invokes the standard out print stream.'",
+                "Example 2: If the summary is a heavily structured technical list:",
+                "  spoken_summary: 'I published the comprehensive tutorial you requested below. It covers all the core modules. I highly recommend reading through the third section regarding integrations at your leisure.'"
         );
     }
 

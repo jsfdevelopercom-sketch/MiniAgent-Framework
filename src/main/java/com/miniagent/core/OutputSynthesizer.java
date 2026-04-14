@@ -36,33 +36,24 @@ public class OutputSynthesizer {
      * @param originalQuery The user's original request.
      * @return A pristine StructuredResponse ready for the frontend.
      */
-    public StructuredResponse synthesize(StructuredResponse draft, String originalQuery) {
+    public StructuredResponse synthesize(StructuredResponse draft, String originalQuery, String synthesizerModel) {
         int maximumRepeats = 3; // We give it 3 solid attempts before we give up completely
         int attempt = 1;
 
         while (attempt <= maximumRepeats) {
             try {
                 System.out.println("[SYNTHESIZER] Execution Cycle " + attempt + " running...");
-                
                 /*
-                 * Step 1: Gemini Extraction
-                 * Take the messy worker output and ask Gemini to pluck out the underlying logic.
-                 * We explicitly instruct Gemini to IGNORE errors if it notices 'empty json returned' 
-                 * bleeding through an earlier layer so it doesn't propagate nonsense.
-                 */
-                String extractionSys = promptFactory.buildSynthesisExtractionSystemPrompt();
-                String extractionUser = "Original User Query: " + originalQuery + 
-                                        "\n\nMessy AI Draft:\n" + draft.getSummary() + "\n\n" + draft.getRaw() +
-                                        "\n\n[CRITICAL DIRECTIVE]: If the Messy AI Draft complains about 'empty json returned' or looks corrupted, completely IGNORE it. Answer the Original User Query yourself from scratch!";
-                
-                String extractedRaw = gemini.executeTextCall("gemini-1.5-flash", extractionSys, extractionUser);
-
-                /*
-                 * Step 2: OpenAI Schema & Markdown Formatting
-                 * GPT-4o-mini is excellent at structured json adherence.
+                 * Step 1: Direct Final Formatting
+                 * Use dynamically requested synthesis models to format the raw payload. 
+                 * We skip intermediary extraction to prevent data trimming!
                  */
                 String openaiSys = promptFactory.buildSynthesisFormattingSystemPrompt();
-                String formattedJson = openAi.executeStructuredCall("gpt-4o-mini", openaiSys, extractedRaw);
+                String openaiUser = "Original User Query: " + originalQuery + "\n\nRaw Agent Draft:\n" + draft.getRaw();
+                
+                // Ensure default fallback if missing
+                String targetSynth = synthesizerModel != null ? synthesizerModel : "gpt-4o-mini";
+                String formattedJson = openAi.executeStructuredCall(targetSynth, openaiSys, openaiUser);
                 
                 /*
                  * Validation Gateway

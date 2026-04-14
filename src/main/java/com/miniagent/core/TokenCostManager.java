@@ -1,42 +1,41 @@
 package com.miniagent.core;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * TokenCostManager handles recording token usage across AI integrations and
- * calculates estimated cost against quotas (e.g., 1 RS).
+ * calculates estimated cost against quotas (e.g., 10 RS).
  * <p>
  * This follows the BYOT (Bring Your Own Token) architecture limits.
+ * We map a user's unique ID over to an aggregated structure tracking their consumed tokens.
  */
 public class TokenCostManager {
 
-    private final AtomicInteger totalTokens = new AtomicInteger(0);
-    private final AtomicInteger promptTokens = new AtomicInteger(0);
-    private final AtomicInteger completionTokens = new AtomicInteger(0);
+    private final ConcurrentHashMap<String, AtomicInteger> userTokens = new ConcurrentHashMap<>();
 
-    // Rough approximation based on current top-tier GPT and Gemini API blend
-    // Example: $0.01 per 1k prompt, $0.03 per 1k context. 
-    // Roughly 1 INR = $0.012 -> ~1000 tokens blended average.
     private static final double INR_PER_1000_TOKENS = 1.0; 
 
-    public void addUsage(int pTokens, int cTokens) {
-        promptTokens.addAndGet(pTokens);
-        completionTokens.addAndGet(cTokens);
-        totalTokens.addAndGet(pTokens + cTokens);
+    public void addUsage(String userId, int pTokens, int cTokens) {
+        String key = (userId == null || userId.isBlank()) ? "anonymous" : userId;
+        userTokens.computeIfAbsent(key, k -> new AtomicInteger(0)).addAndGet(pTokens + cTokens);
     }
 
-    public int getTotalTokens() {
-        return totalTokens.get();
+    public int getTotalTokens(String userId) {
+        String key = (userId == null || userId.isBlank()) ? "anonymous" : userId;
+        return userTokens.getOrDefault(key, new AtomicInteger(0)).get();
     }
 
-    public double getCostInInr() {
-        return (getTotalTokens() / 1000.0) * INR_PER_1000_TOKENS;
+    public double getCostInInr(String userId) {
+        return (getTotalTokens(userId) / 1000.0) * INR_PER_1000_TOKENS;
     }
 
-    /**
-     * @return true if the free quota threshold has been exceeded.
-     */
-    public boolean isQuotaExceeded() {
-        return getCostInInr() >= 10.0; // Exceeds 10 Rs
+    public boolean isQuotaExceeded(String userId) {
+        return getCostInInr(userId) >= 10.0;
     }
+
+    // Deprecated global hooks for legacy fallback
+    public int getTotalTokens() { return getTotalTokens("anonymous"); }
+    public double getCostInInr() { return getCostInInr("anonymous"); }
+    public boolean isQuotaExceeded() { return isQuotaExceeded("anonymous"); }
 }
