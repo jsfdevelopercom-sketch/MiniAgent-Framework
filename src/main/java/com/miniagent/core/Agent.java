@@ -35,7 +35,7 @@ public class Agent {
         return costManager;
     }
 
-    private void updateThought(String thought) {
+    public void updateThought(String thought) {
         this.currentThought = thought;
         System.out.println("CEO THOUGHT: " + thought);
     }
