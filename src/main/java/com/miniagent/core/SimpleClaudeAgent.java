@@ -27,7 +27,7 @@ public class SimpleClaudeAgent {
         String userPrompt = "Here is the user's query and the discussion history so far:\n" + userQuery;
 
         try {
-            String rawOutput = client.executeTextCall("claude-haiku-4-5-20251001", sysPrompt, userPrompt, temperature);
+            String rawOutput = client.executeTextCall(client.getConfig().getDefaultClaudeModel(), sysPrompt, userPrompt, temperature);
             StructuredResponse response = new StructuredResponse();
             response.setSummary(rawOutput);
             response.setRaw(rawOutput);

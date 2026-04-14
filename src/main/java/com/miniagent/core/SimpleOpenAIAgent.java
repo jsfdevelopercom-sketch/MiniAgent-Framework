@@ -27,7 +27,7 @@ public class SimpleOpenAIAgent {
         String userPrompt = "Here is the user's query and the discussion history so far:\n" + userQuery;
 
         try {
-            String rawOutput = client.executeTextCall("gpt-4o-mini", sysPrompt, userPrompt, temperature);
+            String rawOutput = client.executeTextCall(client.getConfig().getDefaultOpenaiModel(), sysPrompt, userPrompt, temperature);
             StructuredResponse response = new StructuredResponse();
             response.setSummary(rawOutput);
             response.setRaw(rawOutput);

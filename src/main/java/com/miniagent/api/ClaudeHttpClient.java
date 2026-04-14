@@ -26,6 +26,10 @@ public class ClaudeHttpClient {
         this.config = config;
     }
 
+    public AgentConfig getConfig() {
+        return config;
+    }
+
     public String executeStructuredCall(String model, String systemPrompt, String userPrompt) {
         return executeStructuredCall(model, systemPrompt, userPrompt, null, null);
     }

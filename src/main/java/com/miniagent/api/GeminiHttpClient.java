@@ -40,6 +40,13 @@ public class GeminiHttpClient {
                 .build();
     }
 
+    /**
+     * @return the active configuration parameters
+     */
+    public AgentConfig getConfig() {
+        return config;
+    }
+
     public String executeStructuredCall(String model, String systemPrompt, String userPrompt) {
         return executeStructuredCall(model, systemPrompt, userPrompt, null, null);
     }

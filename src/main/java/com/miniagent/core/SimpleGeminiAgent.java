@@ -29,7 +29,7 @@ public class SimpleGeminiAgent {
         try {
             // Optional: You could pass apiKeyOverride into executeTextCall if the client supported dynamic injection
             // The existing clients use sharedConfig, but AgentNeroServer overrides environment natively.
-            String rawOutput = client.executeTextCall("gemini-2.5-flash", sysPrompt, userPrompt, temperature);
+            String rawOutput = client.executeTextCall(client.getConfig().getDefaultGeminiModel(), sysPrompt, userPrompt, temperature);
             StructuredResponse response = new StructuredResponse();
             response.setSummary(rawOutput);
             response.setRaw(rawOutput);
