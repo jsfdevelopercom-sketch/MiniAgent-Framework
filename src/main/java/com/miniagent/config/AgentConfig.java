@@ -19,7 +19,7 @@ public class AgentConfig {
     // The topmost default models if the system chooses to fall back or auto-assign.
     private String defaultOpenaiModel = "gpt-4o-mini";
     private String defaultGeminiModel = "gemini-2.5-flash";
-    private String defaultClaudeModel = "claude-3-haiku-20240307";
+    private String defaultClaudeModel = "claude-haiku-4-5-20251001";
     
     private String topmostAllowedModel = "gpt-4o";
 
