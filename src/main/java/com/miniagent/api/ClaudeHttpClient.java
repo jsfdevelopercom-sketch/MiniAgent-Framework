@@ -83,14 +83,20 @@ public class ClaudeHttpClient {
             }
 
             JsonNode root = mapper.readTree(response.body());
-            JsonNode textNode = root.path("content").path(0).path("text");
+            JsonNode contentNode = root.path("content");
+            StringBuilder textBuilder = new StringBuilder();
+            if (contentNode.isArray()) {
+                for (JsonNode c : contentNode) {
+                    if (c.has("text")) textBuilder.append(c.get("text").asText());
+                }
+            }
             
-            if (textNode.isMissingNode()) {
+            if (textBuilder.length() == 0) {
                 System.err.println("[CLAUDE WARNING] Empty response: " + response.body());
                 return "{\"thought_process\":\"Claude returned an empty frame.\",\"summary\":\"Sorry, but Claude generated an empty response.\",\"convo\":\"\"}";
             }
 
-            String responseJson = textNode.asText().trim();
+            String responseJson = textBuilder.toString().trim();
             if (responseJson.startsWith("```json")) {
                 responseJson = responseJson.substring(7);
                 if (responseJson.endsWith("```")) {
@@ -153,8 +159,14 @@ public class ClaudeHttpClient {
             }
 
             JsonNode root = mapper.readTree(response.body());
-            JsonNode textNode = root.path("content").path(0).path("text");
-            return textNode.isMissingNode() ? "Claude produced an empty message structure." : textNode.asText().trim();
+            JsonNode contentNode = root.path("content");
+            StringBuilder textBuilder = new StringBuilder();
+            if (contentNode.isArray()) {
+                for (JsonNode c : contentNode) {
+                    if (c.has("text")) textBuilder.append(c.get("text").asText());
+                }
+            }
+            return textBuilder.length() == 0 ? "Claude produced an empty message structure." : textBuilder.toString().trim();
 
         } catch (Exception e) {
             return "Claude network disruption: " + e.getMessage();

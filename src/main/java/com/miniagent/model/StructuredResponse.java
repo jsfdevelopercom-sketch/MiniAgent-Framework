@@ -15,6 +15,7 @@ public class StructuredResponse {
     private String summary;
     private String spoken_summary;
     private String convo;
+    private String thoughtSignature;
     
     private String raw;
 
@@ -23,6 +24,14 @@ public class StructuredResponse {
      */
     public String getThought_process() {
         return thought_process;
+    }
+
+    public String getThoughtSignature() {
+        return thoughtSignature;
+    }
+
+    public void setThoughtSignature(String thoughtSignature) {
+        this.thoughtSignature = thoughtSignature;
     }
 
     public void setThought_process(String thought_process) {

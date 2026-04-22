@@ -36,7 +36,7 @@ public class OpenAiHttpClient {
         this.config = config;
         this.mapper = mapper;
         this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
+                .connectTimeout(Duration.ofSeconds(30))
                 .build();
     }
 
