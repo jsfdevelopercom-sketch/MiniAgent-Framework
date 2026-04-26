@@ -51,7 +51,16 @@ public class AgentConfig {
     private String gpt4oMini = "gpt-4o-mini";
     private String o1Preview = "o1-preview";
     private String o1Mini = "o1-mini";
+    // --- GPT-5 Models ---
+    private String gpt54 = "gpt-5.4";
 
+    public String getGpt54() {
+        return gpt54;
+    }
+
+    public void setGpt54(String gpt54) {
+        this.gpt54 = gpt54;
+    }
     /**
      * Default constructor for AgentConfig.
      * API Keys should be injected post-instantiation or via overloaded constructor.
