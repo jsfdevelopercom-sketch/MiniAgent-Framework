@@ -90,9 +90,9 @@ public class TokenCostManager {
         double inputCostUsdPerM = 0;
         double outputCostUsdPerM = 0;
 
-        if (lowerModel.contains("gpt-4o-mini")) {
+        if (lowerModel.contains("gpt-5-nano") || lowerModel.contains("gpt-4o-mini")) {
             inputCostUsdPerM = 0.150; outputCostUsdPerM = 0.600;
-        } else if (lowerModel.contains("gpt-4o")) {
+        } else if (lowerModel.contains("gpt-5.4") || lowerModel.contains("gpt-4o")) {
             inputCostUsdPerM = 5.00; outputCostUsdPerM = 15.00;
         } else if (lowerModel.contains("gpt-4-turbo")) {
             inputCostUsdPerM = 10.00; outputCostUsdPerM = 30.00;
