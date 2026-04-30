@@ -65,7 +65,7 @@ public class ModelRouter {
 
             if (difficulty == TaskClassifier.TaskDifficulty.HARD) {
                 return new ModelRoute(
-                        GEMINI_STRONG,
+                        OPENAI_STRONG,
                         CLAUDE_STRONG,
                         OPENAI_STRONG,
                         OPENAI_CHEAP,
@@ -161,10 +161,18 @@ public class ModelRouter {
             generatorTemp = 0.1;
         }
 
+        String finalModel = model;
+        if (classification != null &&
+                (classification.taskType == TaskClassifier.TaskType.CODE_DEBUGGING ||
+                        classification.taskType == TaskClassifier.TaskType.CODE_GENERATION ||
+                        classification.taskType == TaskClassifier.TaskType.ARCHITECTURE_DESIGN)) {
+            finalModel = OPENAI_STRONG;
+        }
+
         return new ModelRoute(
-                model,
-                model,
-                model,
+                finalModel,
+                finalModel,
+                finalModel,
                 OPENAI_CHEAP,
                 generatorTemp,
                 0.0,
