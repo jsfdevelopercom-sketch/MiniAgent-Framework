@@ -70,7 +70,34 @@ public class OutputSynthesizer {
         this.promptFactory = promptFactory;
         this.mapper = mapper == null ? new ObjectMapper() : mapper;
     }
+private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
+    String answer = text == null ? "" : text;
+    String q = originalQuery == null ? "" : originalQuery.toLowerCase(Locale.ROOT);
 
+    boolean userAskedForCode =
+            q.contains("code") ||
+                    q.contains("html") ||
+                    q.contains("javascript") ||
+                    q.contains("java") ||
+                    q.contains("python") ||
+                    q.contains("working") ||
+                    q.contains("complete") ||
+                    q.contains("elaborate");
+
+    boolean answerHasCode =
+            answer.contains("```") ||
+                    answer.contains("<!DOCTYPE html") ||
+                    answer.contains("<script") ||
+                    answer.contains("function ") ||
+                    answer.contains("class ") ||
+                    answer.contains("const ") ||
+                    answer.contains("let ") ||
+                    answer.contains("public class");
+
+    boolean largeEnough = answer.length() > 2500;
+
+    return userAskedForCode && answerHasCode && largeEnough;
+}
     public StructuredResponse synthesize(
             StructuredResponse draft,
             String originalQuery,
@@ -81,6 +108,20 @@ public class OutputSynthesizer {
                 : draft.normalize();
 
         String bestText = chooseBestDraftText(safeDraft);
+        if (looksLikeLargeCodeAnswer(bestText, originalQuery)) {
+    StructuredResponse direct = safeDraft.normalize();
+
+    if (direct.getSummary().isBlank()) {
+        direct.setSummary(bestText);
+    }
+
+    direct.setThought_process("Large code answer preserved without destructive synthesis.");
+    direct.setSpoken_summary("I have prepared the full code on screen.");
+    direct.putMeta("synthesisSkipped", true);
+    direct.putMeta("synthesisSkipReason", "large_code_answer");
+
+    return direct.normalize();
+}
 
         if (bestText.isBlank()) {
             return StructuredResponse.failure(

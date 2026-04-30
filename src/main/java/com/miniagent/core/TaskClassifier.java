@@ -96,7 +96,7 @@ public class TaskClassifier {
         for (ClassifierProvider currentProvider : providerOrder) {
             try {
                 String rawJson = invokeProvider(currentProvider, normalizedTask);
-                TaskClassification classification = parseAndNormalize(rawJson, currentProvider);
+                TaskClassification classification = parseAndNormalize(rawJson, currentProvider, normalizedTask);
                 return classification;
             } catch (Exception ex) {
                 failures.add(currentProvider + ": " + ex.getMessage());
@@ -196,7 +196,7 @@ public class TaskClassifier {
                 """.formatted(userTask);
     }
 
-    private TaskClassification parseAndNormalize(String rawJson, ClassifierProvider providerUsed) throws Exception {
+    private TaskClassification parseAndNormalize(String rawJson, ClassifierProvider providerUsed, String normalizedTask) throws Exception {
         if (rawJson == null || rawJson.isBlank()) {
             throw new IllegalArgumentException("Classifier returned blank JSON.");
         }
@@ -232,11 +232,21 @@ public class TaskClassifier {
         if (reason == null || reason.isBlank()) {
             reason = "Classified by " + providerUsed + ".";
         }
-
+        
+        boolean needsDeepReasoning = classification.needsDeepReasoning;
+        
+if (looksLikeLargeCodeTask(normalizedTask)) {
+    taskType = TaskType.CODE_GENERATION;
+    difficulty = TaskDifficulty.HARD;
+    pipeline = RecommendedPipeline.PLAN_THINK_CRITIC_REPAIR;
+    maxAttempts = Math.max(maxAttempts, 3);
+    maxAnswerTokens = Math.max(maxAnswerTokens, 12000);
+    needsDeepReasoning = true;
+}
         return new TaskClassification(
                 taskType,
                 difficulty,
-                classification.needsDeepReasoning,
+                needsDeepReasoning,
                 needsTools,
                 needsWeb,
                 needsFileAccess,
@@ -248,7 +258,31 @@ public class TaskClassifier {
                 trimReason(reason),
                 providerUsed.name());
     }
+private static boolean looksLikeLargeCodeTask(String task) {
+    String q = task == null ? "" : task.toLowerCase(Locale.ROOT);
 
+    boolean code =
+            q.contains("code") ||
+                    q.contains("html") ||
+                    q.contains("javascript") ||
+                    q.contains("java") ||
+                    q.contains("python") ||
+                    q.contains("app") ||
+                    q.contains("editor");
+
+    boolean large =
+            q.contains("complete") ||
+                    q.contains("full") ||
+                    q.contains("working") ||
+                    q.contains("elaborate") ||
+                    q.contains("extremely detailed") ||
+                    q.contains("no placeholder") ||
+                    q.contains("must not include placeholders") ||
+                    q.contains("like vscode") ||
+                    q.contains("visual studio code");
+
+    return code && large;
+}
     private TaskClassification fallbackClassification(String userTask, List<String> failures) {
         TaskType taskType = roughTaskType(userTask);
         TaskDifficulty difficulty = roughDifficulty(userTask);

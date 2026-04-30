@@ -200,7 +200,10 @@ public class PromptFactory {
                 "  \"repair_instructions\": [],",
                 "  \"strengths\": [],",
                 "  \"rationale\": \"short rationale under 80 words\"",
-                "}");
+                "}"+
+                "- Do not penalize long output if the user requested complete/elaborate code."+
+"- For code generation, completeness is more important than brevity."+
+"- A long single-file implementation is acceptable if the user requested it.");
     }
 
     /**

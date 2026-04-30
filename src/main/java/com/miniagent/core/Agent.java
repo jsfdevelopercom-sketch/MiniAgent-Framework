@@ -142,7 +142,37 @@ public class Agent {
                 null,
                 null);
     }
+private boolean isLargeCodeGenerationRequest(
+        String userQuery,
+        TaskClassifier.TaskClassification classification
+) {
+    String q = userQuery == null ? "" : userQuery.toLowerCase();
 
+    boolean classifiedAsCode =
+            classification != null &&
+                    (classification.taskType == TaskClassifier.TaskType.CODE_GENERATION ||
+                            classification.taskType == TaskClassifier.TaskType.CODE_DEBUGGING ||
+                            classification.taskType == TaskClassifier.TaskType.ARCHITECTURE_DESIGN);
+
+    boolean userExplicitlyWantsLargeCode =
+            q.contains("complete code") ||
+                    q.contains("full code") ||
+                    q.contains("entire code") ||
+                    q.contains("extremely detailed") ||
+                    q.contains("elaborate") ||
+                    q.contains("working code") ||
+                    q.contains("must not include placeholders") ||
+                    q.contains("no placeholders") ||
+                    q.contains("like vscode") ||
+                    q.contains("visual studio code") ||
+                    q.contains("text editor") ||
+                    q.contains("production ready") ||
+                    q.contains("single file") ||
+                    q.contains("html js") ||
+                    q.contains("html javascript");
+
+    return classifiedAsCode && userExplicitlyWantsLargeCode;
+}
     public String getCurrentThought() {
         return currentThought;
     }
@@ -1766,11 +1796,14 @@ public class Agent {
         sb.append("You are a precise MiniAgent worker. ");
         sb.append("You must solve the user task directly and avoid unnecessary verbosity. ");
 
-        if (classification.taskType == TaskClassifier.TaskType.CODE_GENERATION ||
-                classification.taskType == TaskClassifier.TaskType.CODE_DEBUGGING) {
-            sb.append("For code tasks, produce complete, compile-ready code. ");
-            sb.append("Do not use placeholders, TODOs, ghost methods, or undefined helper references. ");
-        }
+       if (classification.taskType == TaskClassifier.TaskType.CODE_GENERATION ||
+        classification.taskType == TaskClassifier.TaskType.CODE_DEBUGGING) {
+    sb.append("For code tasks, produce complete, compile-ready, runnable code. ");
+    sb.append("Do not use placeholders, TODOs, ghost methods, pseudo-code, omitted sections, or undefined helper references. ");
+    sb.append("If the user asks for elaborate code, provide the full implementation even if long. ");
+    sb.append("Do not summarize code unless the user explicitly asks for a summary. ");
+    sb.append("Do not replace requested code with explanations. ");
+}
 
         if (classification.taskType == TaskClassifier.TaskType.ARCHITECTURE_DESIGN) {
             sb.append("For architecture tasks, give concrete components, responsibilities, and flow. ");
@@ -1792,31 +1825,37 @@ public class Agent {
         return sb.toString();
     }
 
-    private String buildInitialTaskInstruction(
-            String userQuery,
-            TaskClassifier.TaskClassification classification) {
-        return """
-                Complete the user's task.
+private String buildInitialTaskInstruction(
+        String userQuery,
+        TaskClassifier.TaskClassification classification
+) {
+    return """
+            Complete the user's task.
 
-                Task type: %s
-                Difficulty: %s
-                Pipeline: %s
+            Task type: %s
+            Difficulty: %s
+            Pipeline: %s
 
-                User task:
-                %s
+            User task:
+            %s
 
-                Requirements:
-                - Solve the task directly.
-                - Do not mention internal agent stages.
-                - Do not include irrelevant history.
-                - If code is requested, provide complete code.
-                """.formatted(
-                classification.taskType,
-                classification.difficulty,
-                classification.recommendedPipeline,
-                userQuery);
-    }
-
+            Requirements:
+            - Solve the task directly.
+            - Do not mention internal agent stages.
+            - Do not include irrelevant history.
+            - If code is requested, provide complete code.
+            - If the user asks for a full/elaborate/working implementation, produce the full implementation.
+            - Do not provide a toy example when the user asks for a serious app-level implementation.
+            - Do not return only imports, snippets, setup lines, or partial fragments.
+            - Do not say “additional functionality can be added later.”
+            - Do not use placeholders, TODOs, “for brevity”, “implementation omitted”, or pseudo-code.
+            """.formatted(
+            classification.taskType,
+            classification.difficulty,
+            classification.recommendedPipeline,
+            userQuery
+    );
+}
     private String buildReplanTaskInstruction(
             String userQuery,
             TaskClassifier.TaskClassification classification,

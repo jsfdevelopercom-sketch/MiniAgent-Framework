@@ -41,9 +41,11 @@ final class SimpleAgentSupport {
             sb.append("- Do not return [SILENCE].\n");
             sb.append("- Give a complete useful answer.\n");
             sb.append("- You may use markdown if helpful.\n");
-            sb.append("- Stay concise but not artificially short.\n");
-            sb.append("- Maximum target length: ").append(safeContext.getMaxWords())
-                    .append(" words unless the user explicitly asks for more.\n");
+          sb.append("- Stay concise only for simple questions.\n");
+sb.append("- For coding tasks, produce complete working code even if long.\n");
+sb.append("- Do not downgrade app-level requests into toy examples.\n");
+sb.append("- Do not use placeholders, TODOs, omitted sections, or pseudo-code.\n");
+sb.append("- Maximum target length: ").append(safeContext.getMaxWords()).append(" words unless the user needs complete code.\n");
         } else {
             sb.append("- Mode: GROUP_CHAT_MEMBER.\n");
             sb.append("- You are one speaker among multiple model entities.\n");
@@ -52,6 +54,7 @@ final class SimpleAgentSupport {
             sb.append("- If you add no genuinely new value, reply exactly: [SILENCE]\n");
             sb.append("- No markdown headers.\n");
             sb.append("- Maximum target length: ").append(safeContext.getMaxWords()).append(" words.\n");
+       sb.append("- Exception: if the user directly asks this model for complete code, do not stay silent and do not artificially shorten.\n");
         }
 
         sb.append("\nGENERAL RULES\n");

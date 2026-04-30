@@ -51,19 +51,37 @@ public class GroupChatContext {
         context.setUserQuery(userQuery);
         context.setMode(ModelEntityMode.SINGLE_MODEL_EXCLUSIVE);
         context.setMessages(messages);
-        context.setMaxWords(500);
+        context.setMaxWords(5000);
         context.setAllowSilence(false);
         context.setAllowMarkdown(true);
         return context;
     }
+private static boolean looksLikeCodeRequest(String text) {
+    String q = text == null ? "" : text.toLowerCase();
 
+    return q.contains("code") ||
+            q.contains("html") ||
+            q.contains("javascript") ||
+            q.contains("java") ||
+            q.contains("python") ||
+            q.contains("working") ||
+            q.contains("complete") ||
+            q.contains("elaborate") ||
+            q.contains("app") ||
+            q.contains("editor");
+}
     public static GroupChatContext fromRawQuery(String rawUserQuery, ModelEntityMode mode) {
         GroupChatContext context = new GroupChatContext();
         context.setUserQuery(rawUserQuery);
         context.setMode(mode == null ? ModelEntityMode.GROUP_CHAT_MEMBER : mode);
 
         if (context.getMode() == ModelEntityMode.SINGLE_MODEL_EXCLUSIVE) {
-            context.setMaxWords(500);
+            context.setMaxWords(5000);
+            context.setAllowSilence(false);
+            context.setAllowMarkdown(true);
+        } 
+        if (looksLikeCodeRequest(rawUserQuery)) {
+            context.setMaxWords(2500);
             context.setAllowSilence(false);
             context.setAllowMarkdown(true);
         } else {
@@ -71,7 +89,6 @@ public class GroupChatContext {
             context.setAllowSilence(true);
             context.setAllowMarkdown(false);
         }
-
         return context;
     }
 
