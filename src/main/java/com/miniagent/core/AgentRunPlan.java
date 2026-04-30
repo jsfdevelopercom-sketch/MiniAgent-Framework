@@ -81,7 +81,7 @@ public class AgentRunPlan {
                 threshold,
                 maxTokens,
                 wallClock,
-                false,
+                true,
                 true,
                 true,
                 planner,
