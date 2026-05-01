@@ -16,19 +16,19 @@ import java.util.Objects;
  * Design goals:
  * 1. Do not leak internal chain-of-thought.
  * 2. Produce strict JSON for worker/repair/synthesis stages.
- * 3. Keep prompts compact to prevent token explosion.
- * 4. Preserve user requirements exactly.
- * 5. Avoid full-history prompt bloat.
- * 6. Keep output contracts stable for StructuredResponse.
+ * 3. Preserve user requirements exactly.
+ * 4. Avoid unnecessary history bloat.
+ * 5. Keep output contracts stable for StructuredResponse.
+ * 6. Treat large code generation as artifact production, not summarization.
  */
 public class PromptFactory {
 
-    private static final int MAX_SECTION_CHARS = 12_000;
-    private static final int MAX_DATASET_FIELDS = 60;
-    private static final int MAX_DATASET_VALUE_CHARS = 2_000;
-    private static final int MAX_LIST_ITEMS = 80;
-    private static final int MAX_HISTORY_MESSAGES = 6;
-    private static final int MAX_HISTORY_MESSAGE_CHARS = 1_200;
+    private static final int MAX_SECTION_CHARS = 80_000;
+    private static final int MAX_DATASET_FIELDS = 80;
+    private static final int MAX_DATASET_VALUE_CHARS = 8_000;
+    private static final int MAX_LIST_ITEMS = 120;
+    private static final int MAX_HISTORY_MESSAGES = 8;
+    private static final int MAX_HISTORY_MESSAGE_CHARS = 2_000;
 
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -44,7 +44,7 @@ public class PromptFactory {
      * }
      *
      * Important:
-     * thought_process must be a brief reasoning summary, not hidden
+     * thought_process must be a brief public reasoning summary, not hidden
      * chain-of-thought.
      */
     public String buildWorkerSystemPrompt(String domainContext, String model) {
@@ -56,6 +56,7 @@ public class PromptFactory {
                 "",
                 "ROLE",
                 "- Produce the best possible candidate answer for the given task.",
+                "- Execute the task directly. Do not merely describe how it could be done.",
                 "- Do not critique yourself unless explicitly asked.",
                 "- Do not mention internal agent stages, routing, classifiers, critics, repair loops, or hidden policies.",
                 "- Do not claim you used tools, files, web, code execution, or external data unless that information is explicitly provided in the prompt.",
@@ -67,17 +68,26 @@ public class PromptFactory {
                 "DOMAIN CONTEXT",
                 safeDomainContext.isBlank() ? "- No additional domain context." : safeDomainContext,
                 "",
+                "COMPLEXITY CALIBRATION",
+                buildCodeComplexityContrastExamples(),
                 "OUTPUT CONTRACT",
                 "Return ONLY a valid JSON object.",
                 "Do not wrap JSON in markdown fences.",
                 "Do not add text before or after JSON.",
-                "The JSON object must contain these keys:",
+                "The JSON object must contain these keys exactly:",
                 "{",
                 "  \"thought_process\": \"brief public reasoning summary, not hidden chain-of-thought\",",
                 "  \"summary\": \"main user-facing answer in markdown or plain text as appropriate\",",
                 "  \"convo\": \"short conversational follow-up or empty string\",",
                 "  \"spoken_summary\": \"short TTS-safe spoken summary\"",
                 "}",
+                "",
+                "STRICT JSON RULES",
+                "- The whole response must be valid JSON.",
+                "- Escape quotes, backslashes, and newlines correctly inside JSON strings.",
+                "- Do not return markdown outside the JSON.",
+                "- If the answer contains code fences, those fences must be inside the JSON string value of summary.",
+                "- The summary value is allowed to be very long when the user requested complete code.",
                 "",
                 "REASONING VISIBILITY RULE",
                 "- The thought_process field must be brief and safe to show.",
@@ -89,18 +99,28 @@ public class PromptFactory {
                 "- Satisfy the user's actual task, not a nearby task.",
                 "- Preserve explicit constraints from the task.",
                 "- Do not invent facts, filenames, APIs, diagnoses, results, prices, citations, or test outcomes.",
-                "- If the task requests code, provide complete code with no placeholders.",
                 "- If the task requests a concise answer, keep it concise.",
                 "- If the task requests detail, provide useful structure and specifics.",
                 "- If required information is missing, state the limitation clearly inside summary instead of fabricating.",
                 "",
-                "CODE TASK RULES",
-                "- Code must be complete, coherent, and compile-oriented.",
-                "- Do not leave TODO, FIXME, placeholder methods, pseudo-code, or \"implementation omitted\" sections.",
+                "CODE ARTIFACT RULES",
+                "- If the task requests code, the summary field must contain the actual complete code or complete file content.",
+                "- Do not put only an explanation when code is requested.",
+                "- Do not say \"here is a basic example\" when the user asked for complete/professional/production-level work.",
+                "- Do not downgrade large app/codebase requests into toy examples.",
+                "- Do not use TODO, FIXME, placeholder methods, placeholder classes, pseudo-code, ellipses, or \"implementation omitted\".",
+                "- Do not write comments such as \"add the rest here\", \"continue similarly\", \"other handlers omitted\", or \"for brevity\".",
                 "- Do not reference helper methods/classes that are not included or clearly part of the user's existing project.",
+                "- Every referenced helper function, variable, listener, class, CSS selector, and DOM id must be defined or intentionally provided by the runtime/library.",
                 "- Keep class/package names consistent with the requested context.",
                 "- Avoid unnecessary wrapper classes.",
                 "- Prefer straightforward senior-engineer style.",
+                "- Prefer robust error handling, clean state management, and complete event wiring.",
+                "- If asked for a single-file HTML/JS app, produce one complete runnable HTML file with CSS and JavaScript included.",
+                "- If asked for multiple files or a codebase, clearly separate files with filenames and complete code blocks.",
+                "- For frontend apps, connect menus, buttons, keyboard shortcuts, panels, state updates, persistence, import/export, and user-visible status messages where relevant.",
+                "- For editor/IDE-like apps, include practical features such as file/open/save/import/export, undo/redo, search/replace, line/column status, shortcuts, panels, tabs or buffers, preferences, theme handling, and graceful errors when feasible.",
+                "- Code completeness is more important than brevity when the user explicitly asks for complete/professional/detailed output.",
                 "",
                 "MEDICAL / HIGH-STAKES RULES",
                 "- Do not add clinical facts not provided.",
@@ -110,13 +130,17 @@ public class PromptFactory {
                 "FORMATTING RULES",
                 "- For casual chat, summary should be plain conversational text without markdown headings.",
                 "- For technical/code/architecture tasks, summary may use clean markdown headings and code fences.",
-                "- Code blocks must use the correct language tag, for example ```java.",
+                "- Code blocks must use the correct language tag, for example ```java or ```html.",
                 "- spoken_summary must never read long code or long documents verbatim.",
                 "- spoken_summary should be one or two natural sentences.");
     }
 
     /**
      * Builds the user prompt for the generative worker.
+     *
+     * For code tasks, this method injects a strong artifact directive so the
+     * worker understands that the final summary must contain the complete
+     * implementation, not a compressed explanation.
      */
     public String buildWorkerUserPrompt(
             String taskInstructions,
@@ -125,6 +149,10 @@ public class PromptFactory {
         String safeTask = cleanBlock(taskInstructions, "");
         String safeLiveInjections = bullets(liveInjections);
         String safeDataset = mapToText(dataset);
+
+        boolean codeTask = looksLikeCodeOrEngineeringTask(safeTask)
+                || looksLikeCodeOrEngineeringTask(safeLiveInjections)
+                || looksLikeCodeOrEngineeringTask(safeDataset);
 
         return joinSections(
                 "TASK",
@@ -136,20 +164,21 @@ public class PromptFactory {
                 "GROUND TRUTH DATASET",
                 safeDataset,
 
+                codeTask ? "CODE ARTIFACT DIRECTIVE" : "TASK COMPLETION DIRECTIVE",
+                codeTask ? buildCodeArtifactDirective() : buildNormalTaskDirective(),
+
                 "EXECUTION INSTRUCTIONS",
                 joinLines(
                         "- Use the TASK as the authority.",
                         "- Use the DATASET only as supporting ground truth.",
                         "- Obey every live instruction.",
                         "- Return only JSON matching the system output contract.",
-                        "- Do not include internal agent metadata in summary."));
+                        "- Do not include internal agent metadata in summary.",
+                        "- Do not mention hidden routing, critic, repair, or model fallback behavior."));
     }
 
     /**
-     * Kept for compatibility.
-     *
-     * New MiniAgentEvaluator may build its own JSON critic prompt internally,
-     * but this method now also returns a strict JSON evaluator prompt.
+     * Builds strict system instructions for the evaluator.
      */
     public String buildEvaluatorSystemPrompt() {
         return joinLines(
@@ -174,9 +203,26 @@ public class PromptFactory {
                 "STRICT FAILURE RULES",
                 "- Empty output: pass=false.",
                 "- Placeholder/TODO/incomplete code: pass=false.",
+                "- Ellipsis or omitted sections inside code: pass=false.",
                 "- Undefined helper methods in code: pass=false.",
+                "- Missing imports or unconnected event handlers in code: pass=false.",
+                "- UI controls that are visually represented but not wired: pass=false for app/editor requests.",
                 "- Ignored explicit user requirement: pass=false.",
                 "- Unsupported factual/clinical/legal/financial claim: pass=false.",
+                "- If user requested complete/professional/production-level code, a small demo or stub must fail.",
+                "- If the output is only a minimal demo while the request clearly asks for a complete product/module/system, pass=false.",
+                "",
+                "COMPLEXITY CALIBRATION EXAMPLES",
+                buildCodeComplexityContrastExamples(),
+                "CODE EVALUATION RULES",
+                "- Check whether the draft actually contains the requested complete implementation.",
+                "- Check whether all menus, buttons, keyboard shortcuts, panels, and controls mentioned or represented are connected.",
+                "- Check whether required state management exists.",
+                "- Check whether save/load/import/export/search/replace/undo/redo/status behavior exists when relevant.",
+                "- Do not penalize long output if the user requested complete/elaborate code.",
+                "- For code generation, completeness is more important than brevity.",
+                "- A long single-file implementation is acceptable if the user requested it.",
+                "- Do not pass code merely because it is syntactically code-like.",
                 "",
                 "REQUIRED JSON SCHEMA",
                 "{",
@@ -200,10 +246,7 @@ public class PromptFactory {
                 "  \"repair_instructions\": [],",
                 "  \"strengths\": [],",
                 "  \"rationale\": \"short rationale under 80 words\"",
-                "}"+
-                "- Do not penalize long output if the user requested complete/elaborate code."+
-"- For code generation, completeness is more important than brevity."+
-"- A long single-file implementation is acceptable if the user requested it.");
+                "}");
     }
 
     /**
@@ -215,6 +258,12 @@ public class PromptFactory {
             Map<String, Object> dataset,
             List<String> liveInjections,
             List<Map<String, String>> history) {
+        boolean codeTask = looksLikeCodeOrEngineeringTask(draft)
+                || looksLikeCodeOrEngineeringTask(bullets(rules))
+                || looksLikeCodeOrEngineeringTask(bullets(liveInjections))
+                || looksLikeCodeOrEngineeringTask(mapToText(dataset))
+                || looksLikeCodeOrEngineeringTask(historyToText(history));
+
         return joinSections(
                 "COMPACT RECENT CONVERSATION HISTORY",
                 historyToText(history),
@@ -231,14 +280,8 @@ public class PromptFactory {
                 "GROUND TRUTH DATASET",
                 mapToText(dataset),
 
-                "EVALUATION TASK",
-                joinLines(
-                        "- Judge only the draft above.",
-                        "- Do not rewrite the draft.",
-                        "- Identify exact reasons for failure.",
-                        "- If the draft is acceptable, pass=true and keep issues empty or minor only.",
-                        "- If code is present, check for placeholders, ghost references, undefined helpers, missing imports, and incomplete methods.",
-                        "- Return only JSON matching the required schema."));
+                codeTask ? "CODE-SPECIFIC EVALUATION DIRECTIVE" : "EVALUATION TASK",
+                codeTask ? buildCodeEvaluationDirective() : buildNormalEvaluationDirective());
     }
 
     /**
@@ -272,8 +315,18 @@ public class PromptFactory {
                 "- Do not add unsupported facts.",
                 "- Do not introduce new placeholders.",
                 "- If code is involved, return complete compile-oriented code.",
-                "- No TODO, no pseudo-code, no omitted sections.",
+                "- If code is involved, the summary field must contain the repaired complete code or complete file content.",
+                "- No TODO, no pseudo-code, no omitted sections, no ellipses, no \"same as above\".",
+                "- Do not shrink a production/complete implementation into a smaller demo.",
                 "- Make the repaired output strictly better than the broken draft.",
+                "",
+                "CODE REPAIR RULES",
+                "- Preserve all working features from the previous draft.",
+                "- Add missing required features instead of replacing the whole app with a smaller version.",
+                "- Wire all controls that appear in the UI.",
+                "- Define every referenced helper, listener, class, id, selector, and state variable.",
+                "- Keep HTML, CSS, and JavaScript in valid order for single-file apps.",
+                "- Never interleave CSS declarations with HTML nodes or JavaScript statements.",
                 "",
                 "REASONING VISIBILITY RULE",
                 "- thought_process must be a short public repair summary.",
@@ -289,6 +342,12 @@ public class PromptFactory {
             List<String> structuralFixes,
             List<String> missingInstructions,
             Map<String, Object> dataset) {
+        boolean codeTask = looksLikeCodeOrEngineeringTask(previousDraft)
+                || looksLikeCodeOrEngineeringTask(bullets(factualityFixes))
+                || looksLikeCodeOrEngineeringTask(bullets(structuralFixes))
+                || looksLikeCodeOrEngineeringTask(bullets(missingInstructions))
+                || looksLikeCodeOrEngineeringTask(mapToText(dataset));
+
         return joinSections(
                 "BROKEN DRAFT",
                 cleanBlock(previousDraft, "[EMPTY BROKEN DRAFT]"),
@@ -305,13 +364,8 @@ public class PromptFactory {
                 "GROUND TRUTH DATASET",
                 mapToText(dataset),
 
-                "REPAIR DIRECTIVE",
-                joinLines(
-                        "- Produce the repaired final answer now.",
-                        "- Apply every fix that is relevant.",
-                        "- Do not mention that this is a repair.",
-                        "- Do not include internal analysis.",
-                        "- Return only JSON matching the repair system contract."));
+                codeTask ? "CODE REPAIR DIRECTIVE" : "REPAIR DIRECTIVE",
+                codeTask ? buildCodeRepairDirective() : buildNormalRepairDirective());
     }
 
     /**
@@ -329,7 +383,9 @@ public class PromptFactory {
                 "",
                 "OUTPUT",
                 "- Return only the cleaned answer text.",
-                "- Do not add new facts.");
+                "- Do not add new facts.",
+                "- Do not rewrite code.",
+                "- Do not shorten code.");
     }
 
     /**
@@ -362,6 +418,7 @@ public class PromptFactory {
                 "- If the input is technical/code/architecture, use polished markdown.",
                 "- If the input contains code, preserve it in fenced code blocks with correct language tags.",
                 "- Do not shorten code unless explicitly instructed.",
+                "- Do not reorder HTML, CSS, or JavaScript.",
                 "- Do not add generic titles to simple greetings.",
                 "- Do not add fake citations, fake tests, fake links, or fake runtime claims.",
                 "",
@@ -439,6 +496,11 @@ public class PromptFactory {
             String bestDraft,
             String repairMemory,
             Map<String, Object> dataset) {
+        boolean codeTask = looksLikeCodeOrEngineeringTask(originalTask)
+                || looksLikeCodeOrEngineeringTask(bestDraft)
+                || looksLikeCodeOrEngineeringTask(repairMemory)
+                || looksLikeCodeOrEngineeringTask(mapToText(dataset));
+
         return joinSections(
                 "ORIGINAL TASK",
                 cleanBlock(originalTask, "[NO TASK PROVIDED]"),
@@ -452,13 +514,8 @@ public class PromptFactory {
                 "GROUND TRUTH DATASET",
                 mapToText(dataset),
 
-                "REPLAN DIRECTIVE",
-                joinLines(
-                        "- Start from the original task.",
-                        "- Use the best prior draft only if it helps.",
-                        "- Avoid all repeated failures.",
-                        "- Produce the final improved answer.",
-                        "- Return only JSON."));
+                codeTask ? "CODE REPLAN DIRECTIVE" : "REPLAN DIRECTIVE",
+                codeTask ? buildCodeReplanDirective() : buildNormalReplanDirective());
     }
 
     /**
@@ -493,7 +550,196 @@ public class PromptFactory {
                         "- Repair to valid JSON.",
                         "- If a field is missing, infer minimally from the available content.",
                         "- Do not invent new technical facts.",
+                        "- Preserve complete code content when present.",
+                        "- Do not summarize or shorten code.",
                         "- Return only JSON."));
+    }
+
+    /**
+     * Strong directive for code artifact generation.
+     */
+    private String buildCodeArtifactDirective() {
+        return joinLines(
+                "- This is a code/software artifact request.",
+                "- The summary field must contain the final artifact itself.",
+                "- Do not merely explain the design.",
+                "- Do not provide a minimal starter demo unless the user explicitly asked for a starter demo.",
+                "- If the user asked for a complete single-file HTML/JS/CSS application, return a complete runnable HTML document.",
+                "- If the user asked for a codebase, return complete files with filenames and full file contents.",
+                "- Include all important event handlers, state objects, initialization logic, error handling, and UI wiring.",
+                "- Use real implementations, not placeholders.",
+                "- No TODO, no FIXME, no ellipses, no omitted functions, no \"repeat similarly\".",
+                "- Before finalizing, mentally check that every function you call is defined.",
+                "- Before finalizing, mentally check that every UI control displayed has a corresponding event handler or intentionally disabled state.",
+                "- Before finalizing, mentally check that the code can run without immediate ReferenceError / NullPointerException / missing symbol failures.",
+                "- Match the implementation depth to the user's requested scope.",
+                "- If the user asks for a full app/module/system/codebase, include all major connected parts required for that kind of software.",
+                "- If the user asks for a simple demo/example, keep it appropriately small.");
+    }
+
+    /**
+     * Normal non-code task directive.
+     */
+    private String buildNormalTaskDirective() {
+        return joinLines(
+                "- Produce the final answer now.",
+                "- Preserve explicit user constraints.",
+                "- Be concise or detailed according to the user's request.",
+                "- Do not fabricate missing facts.",
+                "- Return only JSON matching the system output contract.");
+    }
+
+    /**
+     * Strong evaluator directive for code tasks.
+     */
+    private String buildCodeEvaluationDirective() {
+        return joinLines(
+                "- Judge only the draft above.",
+                "- Do not rewrite the draft.",
+                "- Return only JSON matching the required schema.",
+                "- If the draft is a small demo but the user asked for complete/professional/production-level code, pass=false.",
+                "- If the user asked for Visual-Studio/VS-Code-level editor and the draft is only textarea/contenteditable/basic Monaco shell, pass=false.",
+                "- If the draft contains TODO, placeholder, ellipsis, omitted sections, or undefined helpers, pass=false.",
+                "- If menus/buttons/controls are represented but not connected, pass=false.",
+                "- If the answer explains features instead of implementing them, pass=false.",
+                "- Provide specific repair instructions listing missing features and incomplete areas.",
+                "- Do not penalize length when complete code was requested.",
+                "- Completeness and instruction adherence should dominate the score for code generation.");
+    }
+
+    /**
+     * Normal evaluator directive for non-code tasks.
+     */
+    private String buildNormalEvaluationDirective() {
+        return joinLines(
+                "- Judge only the draft above.",
+                "- Do not rewrite the draft.",
+                "- Identify exact reasons for failure.",
+                "- If the draft is acceptable, pass=true and keep issues empty or minor only.",
+                "- Return only JSON matching the required schema.");
+    }
+
+    /**
+     * Strong repair directive for code tasks.
+     */
+    private String buildCodeRepairDirective() {
+        return joinLines(
+                "- Produce the repaired final answer now.",
+                "- Apply every relevant fix.",
+                "- Do not mention that this is a repair.",
+                "- Do not include internal analysis.",
+                "- Return only JSON matching the repair system contract.",
+                "- The summary field must contain the complete repaired code/artifact.",
+                "- Preserve working code from the broken draft and add missing parts.",
+                "- Do not shrink the implementation.",
+                "- Do not replace a complex app with a simpler demo.",
+                "- Do not use TODO, placeholder, pseudo-code, ellipsis, omitted sections, or undefined helpers.",
+                "- Ensure every displayed control has logic or a clear disabled state.",
+                "- Ensure HTML/CSS/JS ordering remains valid for single-file apps.",
+                "- Ensure generated Java/Kotlin/Python/etc. references are defined and imports are present when applicable.");
+    }
+
+    /**
+     * Normal repair directive.
+     */
+    private String buildNormalRepairDirective() {
+        return joinLines(
+                "- Produce the repaired final answer now.",
+                "- Apply every fix that is relevant.",
+                "- Do not mention that this is a repair.",
+                "- Do not include internal analysis.",
+                "- Return only JSON matching the repair system contract.");
+    }
+
+    /**
+     * Strong replan directive for failed code attempts.
+     */
+    private String buildCodeReplanDirective() {
+        return joinLines(
+                "- Start from the original task.",
+                "- Avoid all repeated failures.",
+                "- Do not return a small demo if the user requested professional/complete code.",
+                "- Produce the complete final code/artifact.",
+                "- Include filenames if multiple files are needed.",
+                "- No TODO, no ellipses, no placeholders, no omitted sections.",
+                "- Return only JSON matching StructuredResponse.");
+    }
+
+    /**
+     * Normal replan directive.
+     */
+    private String buildNormalReplanDirective() {
+        return joinLines(
+                "- Start from the original task.",
+                "- Use the best prior draft only if it helps.",
+                "- Avoid all repeated failures.",
+                "- Produce the final improved answer.",
+                "- Return only JSON.");
+    }
+
+    /**
+     * Detects whether text suggests a code/software-engineering task.
+     */
+    private boolean looksLikeCodeOrEngineeringTask(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+
+        String s = text.toLowerCase();
+
+        return s.contains("code") ||
+                s.contains("coding") ||
+                s.contains("program") ||
+                s.contains("script") ||
+                s.contains("software") ||
+                s.contains("html") ||
+                s.contains("css") ||
+                s.contains("javascript") ||
+                s.contains("typescript") ||
+                s.contains("java") ||
+                s.contains("kotlin") ||
+                s.contains("python") ||
+                s.contains("c++") ||
+                s.contains("cpp") ||
+                s.contains("c#") ||
+                s.contains("csharp") ||
+                s.contains("golang") ||
+                s.contains("rust") ||
+                s.contains("swift") ||
+                s.contains("php") ||
+                s.contains("ruby") ||
+                s.contains("sql") ||
+                s.contains("xml") ||
+                s.contains("json") ||
+                s.contains("yaml") ||
+                s.contains("gradle") ||
+                s.contains("maven") ||
+                s.contains("spring") ||
+                s.contains("android") ||
+                s.contains("compose") ||
+                s.contains("react") ||
+                s.contains("vue") ||
+                s.contains("node") ||
+                s.contains("express") ||
+                s.contains("backend") ||
+                s.contains("frontend") ||
+                s.contains("api") ||
+                s.contains("server") ||
+                s.contains("editor") ||
+                s.contains("ide") ||
+                s.contains("visual studio") ||
+                s.contains("vs code") ||
+                s.contains("compile") ||
+                s.contains("runnable") ||
+                s.contains("debug") ||
+                s.contains("<html") ||
+                s.contains("<script") ||
+                s.contains("function ") ||
+                s.contains("class ") ||
+                s.contains("public class") ||
+                s.contains("const ") ||
+                s.contains("let ") ||
+                s.contains("var ");
     }
 
     /* ----------------------------- Helpers ----------------------------- */
@@ -593,7 +839,7 @@ public class PromptFactory {
             int count = 0;
 
             for (Map.Entry<?, ?> entry : map.entrySet()) {
-                if (count >= 30) {
+                if (count >= 40) {
                     normalized.put("_truncated", true);
                     break;
                 }
@@ -610,7 +856,7 @@ public class PromptFactory {
             int count = 0;
 
             for (Object item : collection) {
-                if (count >= 40) {
+                if (count >= 60) {
                     normalized.add("...[TRUNCATED]");
                     break;
                 }
@@ -721,6 +967,106 @@ public class PromptFactory {
         }
 
         return trimToMax(normalized.trim(), MAX_SECTION_CHARS);
+    }
+
+    /**
+     * Provides broad few-shot contrast examples that teach the model the difference
+     * between a simple code answer and a codebase-level implementation request.
+     *
+     * These examples are intentionally diverse. They are not feature checklists for
+     * one app type. Their purpose is to teach the model that "complete",
+     * "professional", "production-level", "fully working", "all features
+     * connected",
+     * "codebase", and similar phrasing require a materially larger implementation
+     * than a toy demo.
+     */
+    private String buildCodeComplexityContrastExamples() {
+        return joinLines(
+                "CODE COMPLEXITY CONTRAST EXAMPLES",
+                "",
+                "Example Pair 1: Browser UI",
+                "Simple request:",
+                "\"Create a basic calculator in HTML and JavaScript.\"",
+                "Expected response style:",
+                "- One small runnable HTML file is acceptable.",
+                "- Basic buttons and arithmetic are enough.",
+                "- Minimal styling is acceptable.",
+                "",
+                "Codebase-level request:",
+                "\"Create a complete professional browser-based finance calculator app with loan EMI, amortization table, savings projection, export, local storage, themes, validation, and fully connected menus.\"",
+                "Expected response style:",
+                "- Produce a full runnable app, not a tiny calculator.",
+                "- Include structured HTML, real CSS, and substantial JavaScript state management.",
+                "- Wire every menu/button/control.",
+                "- Include validation, persistence, export/import where relevant, and error handling.",
+                "- No placeholder features.",
+                "",
+                "Example Pair 2: Backend API",
+                "Simple request:",
+                "\"Write a small Express API with one GET /hello route.\"",
+                "Expected response style:",
+                "- A minimal server file is enough.",
+                "- One route and startup code are enough.",
+                "",
+                "Codebase-level request:",
+                "\"Build a production-ready Express REST API for patient records with authentication middleware, validation, CRUD routes, pagination, error handling, audit logging, and clean project structure.\"",
+                "Expected response style:",
+                "- Provide multiple complete files or a clearly separated full implementation.",
+                "- Include routes, controllers/services or equivalent structure, middleware, validation, error handling, and startup wiring.",
+                "- Ensure referenced functions/modules are defined.",
+                "- Avoid fake placeholders like 'connect database here' unless the user explicitly requested a scaffold.",
+                "",
+                "Example Pair 3: Desktop/CLI Tool",
+                "Simple request:",
+                "\"Write a Python script that renames files in a folder.\"",
+                "Expected response style:",
+                "- A single short Python script is enough.",
+                "- Basic argument handling is acceptable.",
+                "",
+                "Codebase-level request:",
+                "\"Create a professional Python CLI file organizer with dry-run mode, undo log, rules config, duplicate detection, safe conflict handling, progress display, and detailed errors.\"",
+                "Expected response style:",
+                "- Implement robust argparse commands/options.",
+                "- Include rule parsing, filesystem safety checks, undo logging, dry-run preview, duplicate/conflict handling, and clear terminal output.",
+                "- Do not omit core functions.",
+                "- The code should be runnable with minimal modification.",
+                "",
+                "Example Pair 4: Android App",
+                "Simple request:",
+                "\"Make a basic Kotlin Compose screen with a counter button.\"",
+                "Expected response style:",
+                "- One composable with state is enough.",
+                "- Minimal UI is acceptable.",
+                "",
+                "Codebase-level request:",
+                "\"Create a complete Android Jetpack Compose patient list module with Room entities, DAO, repository, ViewModel, navigation screen, add/edit form, validation, archive action, and state/error handling.\"",
+                "Expected response style:",
+                "- Provide complete Kotlin files or clearly separated file sections.",
+                "- Include entity, DAO, repository, ViewModel, UI state, composables, navigation hooks, validation, and error handling.",
+                "- Do not reference missing classes or functions.",
+                "- Keep architecture straightforward and compile-oriented.",
+                "",
+                "Example Pair 5: Java/Spring System",
+                "Simple request:",
+                "\"Write a Spring Boot controller that returns hello.\"",
+                "Expected response style:",
+                "- One controller class is enough.",
+                "- Minimal endpoint is acceptable.",
+                "",
+                "Codebase-level request:",
+                "\"Build a complete Spring Boot module for appointment booking with entities, repositories, DTOs, service layer, controllers, validation, exception handling, and conflict checking.\"",
+                "Expected response style:",
+                "- Provide complete classes with package names.",
+                "- Include entity/model, repository, DTOs, service methods, controller endpoints, validation, exception classes/handlers, and booking conflict logic.",
+                "- No ghost methods.",
+                "- No pseudo-code.",
+                "- No 'implement this later' sections.",
+                "",
+                "GENERAL LESSON",
+                "- Do not infer codebase-level complexity from one keyword alone.",
+                "- Infer it from the combination of words like complete/professional/production/fully working/codebase/all features/connected/runnable/detailed and the requested scope.",
+                "- For simple requests, stay appropriately small.",
+                "- For codebase-level requests, produce a complete connected implementation with real logic and no placeholders.");
     }
 
     private String trimToMax(String value, int maxChars) {

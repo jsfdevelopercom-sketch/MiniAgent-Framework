@@ -29,6 +29,13 @@ import java.util.Locale;
  * - Do not run tools.
  * - Do not critique deeply.
  * - Do not add unsupported facts.
+ *
+ * Critical code-safety rule:
+ * - If the user asked for code and the draft contains code, do not send it to a
+ * final cheap synthesis model. Return the draft directly after deterministic
+ * cleanup. Model synthesis can reorder HTML/CSS/JS, remove braces, escape
+ * content incorrectly, shrink implementations, or turn complete code into a
+ * toy example.
  */
 public class OutputSynthesizer {
 
@@ -44,90 +51,68 @@ public class OutputSynthesizer {
 
     /**
      * Backward-compatible constructor.
+     *
+     * Older Agent-Nero / MiniAgent integration code may still construct the
+     * synthesizer with only OpenAI, Gemini, PromptFactory, and ObjectMapper.
+     * This constructor preserves that path and delegates to the Claude-aware
+     * constructor with a null Claude client.
      */
     public OutputSynthesizer(
             OpenAiHttpClient openAi,
             GeminiHttpClient gemini,
             PromptFactory promptFactory,
-            ObjectMapper mapper
-    ) {
+            ObjectMapper mapper) {
         this(openAi, gemini, null, promptFactory, mapper);
     }
 
     /**
-     * Preferred constructor if Claude is also available.
+     * Preferred constructor.
+     *
+     * This constructor supports all currently wired provider clients. The final
+     * synthesis layer is intentionally small and conservative, but when a route
+     * asks for a Claude or Gemini synthesizer, the corresponding client must be
+     * available or the call will fail cleanly and fall back to the best draft.
      */
     public OutputSynthesizer(
             OpenAiHttpClient openAi,
             GeminiHttpClient gemini,
             ClaudeHttpClient claude,
             PromptFactory promptFactory,
-            ObjectMapper mapper
-    ) {
+            ObjectMapper mapper) {
         this.openAi = openAi;
         this.gemini = gemini;
         this.claude = claude;
         this.promptFactory = promptFactory;
         this.mapper = mapper == null ? new ObjectMapper() : mapper;
     }
-private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
-    String answer = text == null ? "" : text;
-    String q = originalQuery == null ? "" : originalQuery.toLowerCase(Locale.ROOT);
 
-    boolean userAskedForCode =
-            q.contains("code") ||
-                    q.contains("html") ||
-                    q.contains("javascript") ||
-                    q.contains("java") ||
-                    q.contains("python") ||
-                    q.contains("working") ||
-                    q.contains("complete") ||
-                    q.contains("elaborate");
-
-    boolean answerHasCode =
-            answer.contains("```") ||
-                    answer.contains("<!DOCTYPE html") ||
-                    answer.contains("<script") ||
-                    answer.contains("function ") ||
-                    answer.contains("class ") ||
-                    answer.contains("const ") ||
-                    answer.contains("let ") ||
-                    answer.contains("public class");
-
-    boolean largeEnough = answer.length() > 2500;
-
-    return userAskedForCode && answerHasCode && largeEnough;
-}
+    /**
+     * Produces the final user-facing StructuredResponse.
+     *
+     * For prose tasks, this method may use a cheap synthesizer model to clean
+     * JSON leakage and improve final formatting. For code tasks, it bypasses
+     * model synthesis entirely once code is detected. That bypass is deliberate:
+     * a final formatting model must not be allowed to mutate line ordering,
+     * remove syntax, compress features, or interleave HTML/CSS/JavaScript.
+     */
     public StructuredResponse synthesize(
             StructuredResponse draft,
             String originalQuery,
-            String synthesizerModel
-    ) {
+            String synthesizerModel) {
         StructuredResponse safeDraft = draft == null
                 ? StructuredResponse.empty()
                 : draft.normalize();
 
         String bestText = chooseBestDraftText(safeDraft);
-        if (looksLikeLargeCodeAnswer(bestText, originalQuery)) {
-    StructuredResponse direct = safeDraft.normalize();
 
-    if (direct.getSummary().isBlank()) {
-        direct.setSummary(bestText);
-    }
-
-    direct.setThought_process("Large code answer preserved without destructive synthesis.");
-    direct.setSpoken_summary("I have prepared the full code on screen.");
-    direct.putMeta("synthesisSkipped", true);
-    direct.putMeta("synthesisSkipReason", "large_code_answer");
-
-    return direct.normalize();
-}
+        if (shouldBypassSynthesisForCode(bestText, originalQuery)) {
+            return preserveCodeDraftWithoutModelSynthesis(safeDraft, bestText);
+        }
 
         if (bestText.isBlank()) {
             return StructuredResponse.failure(
                     "The agent finished, but no usable answer text was produced.",
-                    "SYNTHESIS_NO_DRAFT_TEXT"
-            );
+                    "SYNTHESIS_NO_DRAFT_TEXT");
         }
 
         String targetModel = cleanModel(synthesizerModel);
@@ -177,18 +162,199 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
 
                 return parsed.normalize();
             } catch (Exception e) {
-                failureNotes.add("Attempt " + attempt + " failed on " + model + ": " + e.getClass().getSimpleName() + ": " + safeMessage(e));
+                failureNotes.add("Attempt " + attempt + " failed on " + model + ": "
+                        + e.getClass().getSimpleName() + ": " + safeMessage(e));
             }
         }
 
         return fallbackFromBestDraft(safeDraft, bestText, failureNotes);
     }
 
+    /**
+     * Detects whether model-based final synthesis must be skipped.
+     *
+     * This deliberately does not require the answer to be "large enough".
+     * A short code draft can be short because an upstream generation failed.
+     * Running that fragile draft through a cheap final synthesizer often makes
+     * it worse by scrambling syntax or hiding the real upstream failure.
+     */
+    private boolean shouldBypassSynthesisForCode(String text, String originalQuery) {
+        String answer = text == null ? "" : text;
+        String query = originalQuery == null ? "" : originalQuery.toLowerCase(Locale.ROOT);
+
+        boolean userAskedForCode = userQueryLooksLikeCodeRequest(query);
+        boolean answerHasCode = answerLooksLikeCode(answer);
+
+        return userAskedForCode && answerHasCode;
+    }
+
+    /**
+     * Checks whether the user query is asking for code or software engineering
+     * work. This is intentionally broad and language-inclusive. The purpose is
+     * not final task classification; the MiniAgent classifier already did that.
+     * The purpose here is only to protect generated code from final synthesis.
+     */
+    private boolean userQueryLooksLikeCodeRequest(String queryLower) {
+        if (queryLower == null || queryLower.isBlank()) {
+            return false;
+        }
+
+        return queryLower.contains("code") ||
+                queryLower.contains("coding") ||
+                queryLower.contains("program") ||
+                queryLower.contains("script") ||
+                queryLower.contains("software") ||
+                queryLower.contains("app") ||
+                queryLower.contains("application") ||
+                queryLower.contains("html") ||
+                queryLower.contains("css") ||
+                queryLower.contains("javascript") ||
+                queryLower.contains("typescript") ||
+                queryLower.contains("java") ||
+                queryLower.contains("kotlin") ||
+                queryLower.contains("python") ||
+                queryLower.contains("c++") ||
+                queryLower.contains("cpp") ||
+                queryLower.contains("c#") ||
+                queryLower.contains("csharp") ||
+                queryLower.contains("go ") ||
+                queryLower.contains("golang") ||
+                queryLower.contains("rust") ||
+                queryLower.contains("swift") ||
+                queryLower.contains("php") ||
+                queryLower.contains("ruby") ||
+                queryLower.contains("scala") ||
+                queryLower.contains("runnable") ||
+                queryLower.contains("compile") ||
+                queryLower.contains("compiler") ||
+                queryLower.contains("debug") ||
+                queryLower.contains("bug") ||
+                queryLower.contains("backend") ||
+                queryLower.contains("frontend") ||
+                queryLower.contains("api") ||
+                queryLower.contains("server") ||
+                queryLower.contains("database") ||
+                queryLower.contains("sql") ||
+                queryLower.contains("xml") ||
+                queryLower.contains("json") ||
+                queryLower.contains("yaml") ||
+                queryLower.contains("gradle") ||
+                queryLower.contains("maven") ||
+                queryLower.contains("spring") ||
+                queryLower.contains("android") ||
+                queryLower.contains("compose") ||
+                queryLower.contains("react") ||
+                queryLower.contains("vue") ||
+                queryLower.contains("node") ||
+                queryLower.contains("express") ||
+                queryLower.contains("editor") ||
+                queryLower.contains("ide") ||
+                queryLower.contains("visual studio") ||
+                queryLower.contains("vs code") ||
+                queryLower.contains("complete") ||
+                queryLower.contains("fully working") ||
+                queryLower.contains("working code") ||
+                queryLower.contains("production") ||
+                queryLower.contains("full file") ||
+                queryLower.contains("entire file");
+    }
+
+    /**
+     * Checks whether the current answer text contains real code.
+     *
+     * This is intentionally structural rather than relying on a single language.
+     * It catches HTML documents, scripts, common language keywords, imports,
+     * package declarations, SQL, shell scripts, JSON/YAML-like structures, and
+     * fenced code blocks.
+     */
+    private boolean answerLooksLikeCode(String answer) {
+        if (answer == null || answer.isBlank()) {
+            return false;
+        }
+
+        String lower = answer.toLowerCase(Locale.ROOT);
+
+        return answer.contains("```") ||
+                lower.contains("<!doctype html") ||
+                lower.contains("<html") ||
+                lower.contains("<head") ||
+                lower.contains("<body") ||
+                lower.contains("<script") ||
+                lower.contains("<style") ||
+                lower.contains("</html>") ||
+                lower.contains("function ") ||
+                lower.contains("class ") ||
+                lower.contains("interface ") ||
+                lower.contains("enum ") ||
+                lower.contains("const ") ||
+                lower.contains("let ") ||
+                lower.contains("var ") ||
+                lower.contains("public class") ||
+                lower.contains("private ") ||
+                lower.contains("protected ") ||
+                lower.contains("import ") ||
+                lower.contains("package ") ||
+                lower.contains("@composable") ||
+                lower.contains("fun ") ||
+                lower.contains("def ") ||
+                lower.contains("async ") ||
+                lower.contains("await ") ||
+                lower.contains("#!/") ||
+                lower.contains("select ") ||
+                lower.contains("insert into ") ||
+                lower.contains("create table ") ||
+                lower.contains("springapplication.run") ||
+                lower.contains("document.getelementbyid") ||
+                lower.contains("addeventlistener") ||
+                lower.contains("monaco.editor") ||
+                lower.contains("localstorage") ||
+                lower.contains("json.parse") ||
+                lower.contains("json.stringify");
+    }
+
+    /**
+     * Returns a code draft directly without sending it to a final model.
+     *
+     * The method still normalizes the StructuredResponse and ensures the summary
+     * is populated, but it does not alter the code body through another LLM call.
+     * Metadata is attached so Railway logs and frontend responses can confirm
+     * that the protective bypass fired.
+     */
+    private StructuredResponse preserveCodeDraftWithoutModelSynthesis(
+            StructuredResponse safeDraft,
+            String bestText) {
+        StructuredResponse direct = safeDraft == null
+                ? StructuredResponse.empty()
+                : safeDraft.normalize();
+
+        String currentSummary = direct.getSummary();
+
+        if (currentSummary == null || currentSummary.isBlank()) {
+            direct.setSummary(bestText == null ? "" : bestText);
+        } else {
+            direct.setSummary(cleanFinalSummary(currentSummary, bestText));
+        }
+
+        direct.setThought_process("Code answer preserved without destructive final synthesis.");
+        direct.setSpoken_summary("I have prepared the full code on screen.");
+        direct.putMeta("synthesisSkipped", true);
+        direct.putMeta("synthesisSkipReason", "code_answer_preserved");
+        direct.putMeta("synthesisBypassRule", "user_asked_for_code_and_answer_contains_code");
+
+        return direct.normalize();
+    }
+
+    /**
+     * Executes one structured synthesis call with the requested provider.
+     *
+     * This method is only used for non-code finalization paths, or for tasks
+     * where the draft does not contain code. Provider selection is based on the
+     * model prefix so MiniAgent can keep using centralized model constants.
+     */
     private String executeStructured(
             String model,
             String systemPrompt,
-            String userPrompt
-    ) {
+            String userPrompt) {
         String lower = model == null ? "" : model.toLowerCase(Locale.ROOT);
 
         if (lower.startsWith("gemini")) {
@@ -212,12 +378,19 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
         return openAi.executeStructuredCall(model, systemPrompt, userPrompt, 0.0, null);
     }
 
+    /**
+     * Builds a small fallback list for synthesis.
+     *
+     * Synthesis is intentionally cheap because this layer is not supposed to
+     * solve the task again. It only formats non-code responses into the expected
+     * StructuredResponse shape. Code responses should already have bypassed this.
+     */
     private List<String> synthesisFallbacks(String preferredModel) {
         List<String> models = new ArrayList<>();
 
         addUnique(models, preferredModel);
 
-        String lower = preferredModel.toLowerCase(Locale.ROOT);
+        String lower = preferredModel == null ? "" : preferredModel.toLowerCase(Locale.ROOT);
 
         if (lower.startsWith("gemini")) {
             addUnique(models, ModelConstants.GPT_4_1_MINI);
@@ -231,8 +404,11 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
         return models;
     }
 
+    /**
+     * Adds a model to a candidate list only once.
+     */
     private void addUnique(List<String> models, String model) {
-        if (model == null || model.isBlank()) {
+        if (models == null || model == null || model.isBlank()) {
             return;
         }
 
@@ -243,11 +419,17 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
         }
     }
 
+    /**
+     * Builds the user prompt used for non-code synthesis.
+     *
+     * This prompt tells the synthesizer to preserve content and avoid internal
+     * process leakage. It is intentionally conservative. Code answers should not
+     * reach this method when the bypass rule fires correctly.
+     */
     private String buildSynthesisUserPrompt(
             String originalQuery,
             StructuredResponse draft,
-            String bestText
-    ) {
+            String bestText) {
         String safeQuery = originalQuery == null ? "" : originalQuery.trim();
 
         StringBuilder sb = new StringBuilder();
@@ -268,13 +450,20 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
         sb.append("- Preserve the answer content.\n");
         sb.append("- Do not invent new facts.\n");
         sb.append("- Do not mention synthesis, critic, repair, internal agent stages, or hidden process.\n");
-        sb.append("- If code exists, preserve complete code blocks.\n");
+        sb.append("- If code exists, preserve complete code blocks without changing line order.\n");
         sb.append("- If the draft is already good, mostly keep it and only clean formatting.\n");
         sb.append("- Return only JSON matching the StructuredResponse schema.\n");
 
         return sb.toString();
     }
 
+    /**
+     * Parses a structured response JSON string.
+     *
+     * Provider responses sometimes include fenced JSON or extra text around the
+     * JSON object. This method extracts the object first and then attempts both
+     * strict and loose parsing.
+     */
     private StructuredResponse parseStructuredResponse(String rawJson) {
         if (rawJson == null || rawJson.isBlank()) {
             return null;
@@ -292,6 +481,10 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
         }
     }
 
+    /**
+     * Performs loose parsing when the model returns compatible JSON with
+     * non-exact field names.
+     */
     private StructuredResponse tryLooseParse(String json) {
         try {
             JsonNode root = mapper.readTree(json);
@@ -302,8 +495,7 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
                     "thought_process",
                     "thoughtProcess",
                     "reasoning",
-                    "public_reasoning"
-            ));
+                    "public_reasoning"));
 
             response.setSummary(firstText(root,
                     "summary",
@@ -313,24 +505,21 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
                     "final_answer",
                     "finalAnswer",
                     "output",
-                    "markdown"
-            ));
+                    "markdown"));
 
             response.setConvo(firstText(root,
                     "convo",
                     "conversation",
                     "follow_up",
                     "followUp",
-                    "message"
-            ));
+                    "message"));
 
             response.setSpoken_summary(firstText(root,
                     "spoken_summary",
                     "spokenSummary",
                     "tts",
                     "tts_summary",
-                    "voice_summary"
-            ));
+                    "voice_summary"));
 
             response.setRaw(json);
 
@@ -340,6 +529,9 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
         }
     }
 
+    /**
+     * Returns the first textual field found in a JSON object.
+     */
     private String firstText(JsonNode root, String... keys) {
         if (root == null || keys == null) {
             return "";
@@ -358,18 +550,23 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
         return "";
     }
 
+    /**
+     * Safe fallback when every model-based synthesis attempt fails.
+     *
+     * This preserves the best available draft instead of returning an empty or
+     * internal error-looking answer. The failure notes are retained in metadata.
+     */
     private StructuredResponse fallbackFromBestDraft(
             StructuredResponse safeDraft,
             String bestText,
-            List<String> failureNotes
-    ) {
+            List<String> failureNotes) {
         StructuredResponse fallback = new StructuredResponse();
 
         fallback.setThought_process("Synthesis failed safely; returned best available draft.");
         fallback.setSummary(cleanFinalSummary(bestText, bestText));
-        fallback.setConvo(safeDraft.getConvo());
-        fallback.setSpoken_summary(safeDraft.getSpoken_summary());
-        fallback.setRaw(safeDraft.getRaw());
+        fallback.setConvo(safeDraft == null ? "" : safeDraft.getConvo());
+        fallback.setSpoken_summary(safeDraft == null ? "" : safeDraft.getSpoken_summary());
+        fallback.setRaw(safeDraft == null ? "" : safeDraft.getRaw());
 
         fallback.putMeta("synthesisFallback", true);
         fallback.putMeta("synthesisFailureNotes", failureNotes == null ? List.of() : failureNotes);
@@ -377,7 +574,18 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
         return fallback.normalize();
     }
 
+    /**
+     * Selects the best user-facing text from the draft.
+     *
+     * Summary is preferred. Raw is parsed if it appears to contain a nested
+     * StructuredResponse. Conversation text is used only if summary/raw are not
+     * usable.
+     */
     private String chooseBestDraftText(StructuredResponse draft) {
+        if (draft == null) {
+            return "";
+        }
+
         String summary = draft.getSummary();
         String raw = draft.getRaw();
         String convo = draft.getConvo();
@@ -402,6 +610,9 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
         return firstNonBlank(summary, raw, convo);
     }
 
+    /**
+     * Checks whether text is usable as a final answer candidate.
+     */
     private boolean isUsableUserFacingText(String text) {
         if (text == null || text.isBlank()) {
             return false;
@@ -413,13 +624,18 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
             return false;
         }
 
-        if (cleaned.equals("{}") || cleaned.equals("[]") || cleaned.equalsIgnoreCase("null")) {
-            return false;
-        }
-
-        return cleaned.length() >= 2;
+        return !cleaned.equals("{}")
+                && !cleaned.equals("[]")
+                && !cleaned.equalsIgnoreCase("null")
+                && cleaned.length() >= 2;
     }
 
+    /**
+     * Performs deterministic final cleanup.
+     *
+     * This method does not reorder or rewrite code. It only unwraps accidental
+     * StructuredResponse JSON and removes known empty-response phrases.
+     */
     private String cleanFinalSummary(String summary, String fallback) {
         String chosen = firstNonBlank(summary, fallback);
 
@@ -447,6 +663,9 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
         return cleaned;
     }
 
+    /**
+     * Detects whether text appears to be a serialized StructuredResponse object.
+     */
     private boolean looksLikeStructuredResponseJson(String text) {
         if (text == null) {
             return false;
@@ -461,6 +680,9 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
                         trimmed.contains("\"spoken_summary\""));
     }
 
+    /**
+     * Detects obviously unusable or empty provider output.
+     */
     private boolean isCorrupted(String text) {
         if (text == null) {
             return true;
@@ -477,6 +699,12 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
                 lower.equals("null");
     }
 
+    /**
+     * Extracts a JSON object from raw provider output.
+     *
+     * This handles fenced markdown JSON as well as models that include a small
+     * amount of text before or after the object.
+     */
     private String extractJsonObject(String raw) {
         if (raw == null || raw.isBlank()) {
             return "";
@@ -506,6 +734,9 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
         return "";
     }
 
+    /**
+     * Normalizes the requested synthesizer model.
+     */
     private String cleanModel(String model) {
         if (model == null || model.isBlank()) {
             return DEFAULT_SYNTH_MODEL;
@@ -514,6 +745,9 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
         return model.trim();
     }
 
+    /**
+     * Returns the first non-blank string from the provided values.
+     */
     private String firstNonBlank(String... values) {
         if (values == null) {
             return "";
@@ -528,6 +762,9 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
         return "";
     }
 
+    /**
+     * Limits text length before sending it to a synthesis model.
+     */
     private String limit(String text, int maxChars) {
         if (text == null) {
             return "";
@@ -542,6 +779,9 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
         return text.substring(0, safeMax) + "\n...[TRUNCATED_FOR_SYNTHESIS]";
     }
 
+    /**
+     * Safely extracts an exception message for logs and failure metadata.
+     */
     private String safeMessage(Exception e) {
         if (e == null) {
             return "";
