@@ -144,37 +144,36 @@ public class Agent {
                 null,
                 null);
     }
-private boolean isLargeCodeGenerationRequest(
-        String userQuery,
-        TaskClassifier.TaskClassification classification
-) {
-    String q = userQuery == null ? "" : userQuery.toLowerCase();
 
-    boolean classifiedAsCode =
-            classification != null &&
-                    (classification.taskType == TaskClassifier.TaskType.CODE_GENERATION ||
-                            classification.taskType == TaskClassifier.TaskType.CODE_DEBUGGING ||
-                            classification.taskType == TaskClassifier.TaskType.ARCHITECTURE_DESIGN);
+    private boolean isLargeCodeGenerationRequest(
+            String userQuery,
+            TaskClassifier.TaskClassification classification) {
+        String q = userQuery == null ? "" : userQuery.toLowerCase();
 
-    boolean userExplicitlyWantsLargeCode =
-            q.contains("complete code") ||
-                    q.contains("full code") ||
-                    q.contains("entire code") ||
-                    q.contains("extremely detailed") ||
-                    q.contains("elaborate") ||
-                    q.contains("working code") ||
-                    q.contains("must not include placeholders") ||
-                    q.contains("no placeholders") ||
-                    q.contains("like vscode") ||
-                    q.contains("visual studio code") ||
-                    q.contains("text editor") ||
-                    q.contains("production ready") ||
-                    q.contains("single file") ||
-                    q.contains("html js") ||
-                    q.contains("html javascript");
+        boolean classifiedAsCode = classification != null &&
+                (classification.taskType == TaskClassifier.TaskType.CODE_GENERATION ||
+                        classification.taskType == TaskClassifier.TaskType.CODE_DEBUGGING ||
+                        classification.taskType == TaskClassifier.TaskType.ARCHITECTURE_DESIGN);
 
-    return classifiedAsCode && userExplicitlyWantsLargeCode;
-}
+        boolean userExplicitlyWantsLargeCode = q.contains("complete code") ||
+                q.contains("full code") ||
+                q.contains("entire code") ||
+                q.contains("extremely detailed") ||
+                q.contains("elaborate") ||
+                q.contains("working code") ||
+                q.contains("must not include placeholders") ||
+                q.contains("no placeholders") ||
+                q.contains("like vscode") ||
+                q.contains("visual studio code") ||
+                q.contains("text editor") ||
+                q.contains("production ready") ||
+                q.contains("single file") ||
+                q.contains("html js") ||
+                q.contains("html javascript");
+
+        return classifiedAsCode && userExplicitlyWantsLargeCode;
+    }
+
     public String getCurrentThought() {
         return currentThought;
     }
@@ -198,8 +197,10 @@ private boolean isLargeCodeGenerationRequest(
      * Executes a low-latency, single-pass query without complex evaluation loops.
      * 
      * Deep Insight:
-     * This method bypasses the DraftSanityValidator and Critic stages. It's designed
-     * for trivial tasks (e.g., "What is the time complexity of quicksort?") where the overhead
+     * This method bypasses the DraftSanityValidator and Critic stages. It's
+     * designed
+     * for trivial tasks (e.g., "What is the time complexity of quicksort?") where
+     * the overhead
      * of a full deepThink pipeline would be computationally wasteful and slow.
      */
     public StructuredResponse thinkFast(
@@ -356,9 +357,12 @@ private boolean isLargeCodeGenerationRequest(
      * The primary entry point for complex, multi-stage autonomous reasoning.
      * 
      * Deep Insight:
-     * deepThink acts as the central orchestrator for the "Plan -> Think -> Critic -> Repair" loop.
-     * It dynamically classifies the task difficulty, routes it to the most cost-effective model,
-     * and iteratively refines the output. This ensures high-fidelity results while preventing
+     * deepThink acts as the central orchestrator for the "Plan -> Think -> Critic
+     * -> Repair" loop.
+     * It dynamically classifies the task difficulty, routes it to the most
+     * cost-effective model,
+     * and iteratively refines the output. This ensures high-fidelity results while
+     * preventing
      * hallucinated code from reaching the user.
      */
     public StructuredResponse deepThink(
@@ -441,7 +445,8 @@ private boolean isLargeCodeGenerationRequest(
                         estimateTokens(String.valueOf(classification)),
                         AgentTraceData.classification(classification));
                 if (VERBOSE_LOGGING) {
-                    System.out.println("\n[VERBOSE] *** CLASSIFICATION: " + classification.taskType + " | PIPELINE: " + classification.recommendedPipeline + " ***\n");
+                    System.out.println("\n[VERBOSE] *** CLASSIFICATION: " + classification.taskType + " | PIPELINE: "
+                            + classification.recommendedPipeline + " ***\n");
                 }
                 updateThought(
                         "Task classified as " +
@@ -474,7 +479,7 @@ private boolean isLargeCodeGenerationRequest(
                 }
 
                 if (classification.recommendedPipeline == TaskClassifier.RecommendedPipeline.ASK_USER_CLARIFICATION) {
-                System.out.println("USER CLARIFICATION NEEDED");
+                    System.out.println("USER CLARIFICATION NEEDED");
                     StructuredResponse clarify = StructuredResponse.fromSummary(
                             "I need one or two more details before I can safely complete this task.");
                     clarify.setThought_process("TaskClassifier routed the request to ASK_USER_CLARIFICATION.");
@@ -497,7 +502,7 @@ private boolean isLargeCodeGenerationRequest(
                 }
 
                 ModelRoute route = modelRouter.route(classification, requestedModel);
-                
+
                 if (VERBOSE_LOGGING) {
                     System.out.println("\n[VERBOSE] *** ROUTER ASSIGNMENTS ***");
                     System.out.println("Generator: " + route.getGeneratorModel());
@@ -529,7 +534,7 @@ private boolean isLargeCodeGenerationRequest(
                         runId,
                         safeUserId,
                         safeQuery);
-System.out.println("MODEL ROUTE "+"Model route selected: generator=" +
+                System.out.println("MODEL ROUTE " + "Model route selected: generator=" +
                         route.getGeneratorModel() +
                         ", critic=" +
                         route.getCriticModel() +
@@ -537,7 +542,7 @@ System.out.println("MODEL ROUTE "+"Model route selected: generator=" +
                         route.getRepairModel() +
                         ", synthesizer=" +
                         route.getSynthesizerModel());
-                        
+
                 updateThought("Model route selected: generator=" +
                         route.getGeneratorModel() +
                         ", critic=" +
@@ -761,7 +766,7 @@ System.out.println("MODEL ROUTE "+"Model route selected: generator=" +
         });
 
         try {
-            StructuredResponse response = future.get(300, TimeUnit.SECONDS);
+            StructuredResponse response = future.get(900, TimeUnit.SECONDS);
             updateThought("DeepThink completed.");
             return response;
         } catch (TimeoutException e) {
@@ -769,7 +774,7 @@ System.out.println("MODEL ROUTE "+"Model route selected: generator=" +
             updateThought("DeepThink hit absolute timeout.");
 
             return StructuredResponse.failure(
-                    "I hit the maximum deep-thinking time limit. Please try a smaller task or reduce the requested scope.",
+                    "DeepThink reached the extended execution limit before a final answer was available. The run was stopped safely.",
                     "TIMEOUT");
         } catch (Exception e) {
             updateThought("DeepThink crashed.");
@@ -1448,7 +1453,8 @@ System.out.println("MODEL ROUTE "+"Model route selected: generator=" +
         StructuredResponse candidateDraft = generationResult.getValue().normalize();
 
         if (VERBOSE_LOGGING) {
-            System.out.println("\n[VERBOSE] *** MODEL SELECTED FOR INITIAL GENERATION: " + generationResult.getModelUsed().toUpperCase() + " ***");
+            System.out.println("\n[VERBOSE] *** MODEL SELECTED FOR INITIAL GENERATION: "
+                    + generationResult.getModelUsed().toUpperCase() + " ***");
             System.out.println("[VERBOSE] --- FIRST DRAFT ---");
             System.out.println(candidateDraft.getSummary());
             System.out.println("-----------------------------\n");
@@ -1599,20 +1605,21 @@ System.out.println("MODEL ROUTE "+"Model route selected: generator=" +
             return null;
         }
 
-            StructuredResponse candidateDraft = repairResult.getValue().normalize();
+        StructuredResponse candidateDraft = repairResult.getValue().normalize();
 
-            if (VERBOSE_LOGGING) {
-                System.out.println("\n[VERBOSE] *** MODEL SELECTED FOR REPAIR: " + repairResult.getModelUsed().toUpperCase() + " ***");
-                System.out.println("[VERBOSE] --- REPAIR INSTRUCTIONS ---");
-                System.out.println("Factuality Fixes: " + factualityFixes);
-                System.out.println("Structural Fixes: " + structuralFixes);
-                System.out.println("Missing Instructions: " + missingInstructions);
-                System.out.println("[VERBOSE] --- REPAIRED DRAFT ---");
-                System.out.println(candidateDraft.getSummary());
-                System.out.println("-----------------------------\n");
-            }
+        if (VERBOSE_LOGGING) {
+            System.out.println(
+                    "\n[VERBOSE] *** MODEL SELECTED FOR REPAIR: " + repairResult.getModelUsed().toUpperCase() + " ***");
+            System.out.println("[VERBOSE] --- REPAIR INSTRUCTIONS ---");
+            System.out.println("Factuality Fixes: " + factualityFixes);
+            System.out.println("Structural Fixes: " + structuralFixes);
+            System.out.println("Missing Instructions: " + missingInstructions);
+            System.out.println("[VERBOSE] --- REPAIRED DRAFT ---");
+            System.out.println(candidateDraft.getSummary());
+            System.out.println("-----------------------------\n");
+        }
 
-            recordStageUsage(
+        recordStageUsage(
                 safeUserId,
                 runId,
                 "repair",
@@ -1692,7 +1699,8 @@ System.out.println("MODEL ROUTE "+"Model route selected: generator=" +
             eval = evaluationResult.getValue();
 
             if (VERBOSE_LOGGING) {
-                System.out.println("\n[VERBOSE] *** MODEL SELECTED FOR EVALUATION CRITIC: " + evaluationResult.getModelUsed().toUpperCase() + " ***");
+                System.out.println("\n[VERBOSE] *** MODEL SELECTED FOR EVALUATION CRITIC: "
+                        + evaluationResult.getModelUsed().toUpperCase() + " ***");
                 System.out.println("[VERBOSE] --- CRITIC EVALUATION RESULT ---");
                 System.out.println("Pass: " + eval.isPass());
                 System.out.println("Rationale: " + eval.getGeneralRationale());
@@ -1757,7 +1765,8 @@ System.out.println("MODEL ROUTE "+"Model route selected: generator=" +
                 route.getSynthesizerModel()).normalize();
 
         if (VERBOSE_LOGGING) {
-            System.out.println("\n[VERBOSE] *** MODEL SELECTED FOR FINAL SYNTHESIS: " + route.getSynthesizerModel().toUpperCase() + " ***");
+            System.out.println("\n[VERBOSE] *** MODEL SELECTED FOR FINAL SYNTHESIS: "
+                    + route.getSynthesizerModel().toUpperCase() + " ***");
             System.out.println("[VERBOSE] --- FINAL DRAFT ---");
             System.out.println(synthesized.getSummary());
             System.out.println("-----------------------------\n");
@@ -1853,14 +1862,15 @@ System.out.println("MODEL ROUTE "+"Model route selected: generator=" +
         sb.append("You are a precise MiniAgent worker. ");
         sb.append("You must solve the user task directly and avoid unnecessary verbosity. ");
 
-       if (classification.taskType == TaskClassifier.TaskType.CODE_GENERATION ||
-        classification.taskType == TaskClassifier.TaskType.CODE_DEBUGGING) {
-    sb.append("For code tasks, produce complete, compile-ready, runnable code. ");
-    sb.append("Do not use placeholders, TODOs, ghost methods, pseudo-code, omitted sections, or undefined helper references. ");
-    sb.append("If the user asks for elaborate code, provide the full implementation even if long. ");
-    sb.append("Do not summarize code unless the user explicitly asks for a summary. ");
-    sb.append("Do not replace requested code with explanations. ");
-}
+        if (classification.taskType == TaskClassifier.TaskType.CODE_GENERATION ||
+                classification.taskType == TaskClassifier.TaskType.CODE_DEBUGGING) {
+            sb.append("For code tasks, produce complete, compile-ready, runnable code. ");
+            sb.append(
+                    "Do not use placeholders, TODOs, ghost methods, pseudo-code, omitted sections, or undefined helper references. ");
+            sb.append("If the user asks for elaborate code, provide the full implementation even if long. ");
+            sb.append("Do not summarize code unless the user explicitly asks for a summary. ");
+            sb.append("Do not replace requested code with explanations. ");
+        }
 
         if (classification.taskType == TaskClassifier.TaskType.ARCHITECTURE_DESIGN) {
             sb.append("For architecture tasks, give concrete components, responsibilities, and flow. ");
@@ -1882,37 +1892,36 @@ System.out.println("MODEL ROUTE "+"Model route selected: generator=" +
         return sb.toString();
     }
 
-private String buildInitialTaskInstruction(
-        String userQuery,
-        TaskClassifier.TaskClassification classification
-) {
-    return """
-            Complete the user's task.
+    private String buildInitialTaskInstruction(
+            String userQuery,
+            TaskClassifier.TaskClassification classification) {
+        return """
+                Complete the user's task.
 
-            Task type: %s
-            Difficulty: %s
-            Pipeline: %s
+                Task type: %s
+                Difficulty: %s
+                Pipeline: %s
 
-            User task:
-            %s
+                User task:
+                %s
 
-            Requirements:
-            - Solve the task directly.
-            - Do not mention internal agent stages.
-            - Do not include irrelevant history.
-            - If code is requested, provide complete code.
-            - If the user asks for a full/elaborate/working implementation, produce the full implementation.
-            - Do not provide a toy example when the user asks for a serious app-level implementation.
-            - Do not return only imports, snippets, setup lines, or partial fragments.
-            - Do not say “additional functionality can be added later.”
-            - Do not use placeholders, TODOs, “for brevity”, “implementation omitted”, or pseudo-code.
-            """.formatted(
-            classification.taskType,
-            classification.difficulty,
-            classification.recommendedPipeline,
-            userQuery
-    );
-}
+                Requirements:
+                - Solve the task directly.
+                - Do not mention internal agent stages.
+                - Do not include irrelevant history.
+                - If code is requested, provide complete code.
+                - If the user asks for a full/elaborate/working implementation, produce the full implementation.
+                - Do not provide a toy example when the user asks for a serious app-level implementation.
+                - Do not return only imports, snippets, setup lines, or partial fragments.
+                - Do not say “additional functionality can be added later.”
+                - Do not use placeholders, TODOs, “for brevity”, “implementation omitted”, or pseudo-code.
+                """.formatted(
+                classification.taskType,
+                classification.difficulty,
+                classification.recommendedPipeline,
+                userQuery);
+    }
+
     private String buildReplanTaskInstruction(
             String userQuery,
             TaskClassifier.TaskClassification classification,

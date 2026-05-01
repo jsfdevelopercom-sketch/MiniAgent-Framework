@@ -72,7 +72,15 @@ public class AgentRunPlan {
         int threshold = classification.successThreshold > 0 ? classification.successThreshold : 8;
         int maxTokens = classification.maxAnswerTokens > 0 ? classification.maxAnswerTokens : (hard ? 5000 : 3000);
 
-        Duration wallClock = hard ? Duration.ofSeconds(240) : Duration.ofSeconds(120);
+        boolean complexDeepDive = hard ||
+                classification.taskType == TaskClassifier.TaskType.CODE_GENERATION ||
+                classification.taskType == TaskClassifier.TaskType.CODE_DEBUGGING ||
+                classification.taskType == TaskClassifier.TaskType.ARCHITECTURE_DESIGN ||
+                classification.taskType == TaskClassifier.TaskType.RESEARCH ||
+                classification.recommendedPipeline == TaskClassifier.RecommendedPipeline.PLAN_THINK_CRITIC_REPAIR ||
+                classification.recommendedPipeline == TaskClassifier.RecommendedPipeline.TOOL_AGENT;
+
+        Duration wallClock = complexDeepDive ? Duration.ofMinutes(15) : Duration.ofSeconds(120);
 
         return new AgentRunPlan(
                 classification,
