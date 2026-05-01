@@ -109,7 +109,7 @@ public class SafeThoughtExecutor {
                 logStage(
                                 runId,
                                 userId,
-                                AgentTraceEventType.INFO,
+                                AgentTraceEventType.WARNING,
                                 "generation",
                                 seriousCodeContext
                                                 ? "Using strong generation fallback policy for serious code/software task."
@@ -183,7 +183,7 @@ public class SafeThoughtExecutor {
                 logStage(
                                 runId,
                                 userId,
-                                AgentTraceEventType.INFO,
+                                AgentTraceEventType.WARNING,
                                 "repair",
                                 seriousCodeContext
                                                 ? "Using strong repair fallback policy for serious code/software task."
@@ -245,7 +245,7 @@ public class SafeThoughtExecutor {
                 logStage(
                                 runId,
                                 userId,
-                                AgentTraceEventType.INFO,
+                                AgentTraceEventType.WARNING,
                                 "evaluation",
                                 seriousCodeContext
                                                 ? "Using strong critic fallback policy for serious code/software task."
@@ -307,7 +307,7 @@ public class SafeThoughtExecutor {
                                 logStage(
                                                 runId,
                                                 userId,
-                                                AgentTraceEventType.INFO,
+                                                AgentTraceEventType.WARNING,
                                                 stage,
                                                 "Attempting thought stage with model: " + safeModel(model),
                                                 model,
