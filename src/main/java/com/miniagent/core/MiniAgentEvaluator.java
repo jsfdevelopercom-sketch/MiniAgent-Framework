@@ -502,10 +502,10 @@ public class MiniAgentEvaluator {
         }
 
         if (useGemini) {
-            return "gemini-3.1-flash-lite-preview";
+            return ModelConstants.GEMINI_3_1_FLASH_LITE_PREVIEW;
         }
 
-        return "gpt-4.1-mini";
+        return ModelConstants.GPT_4_1_MINI;
     }
 
     private int normalizeScore(int score) {

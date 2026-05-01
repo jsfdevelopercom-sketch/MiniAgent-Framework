@@ -3,6 +3,7 @@ package com.miniagent.api;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.miniagent.config.AgentConfig;
+import com.miniagent.core.ModelConstants;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -110,12 +111,17 @@ public class GeminiHttpClient {
                 Map<String, Object> genConfig = new LinkedHashMap<>();
                 genConfig.put("responseMimeType", "application/json");
                 
-                if (targetModel.contains("gemini-3.1-pro-preview")) {
+                if (targetModel.contains(ModelConstants.GEMINI_3_1_PRO_PREVIEW)) {
                     Map<String, Object> thinkingCfg = new LinkedHashMap<>();
                     thinkingCfg.put("thinkingLevel", "high");
                     genConfig.put("thinkingConfig", thinkingCfg);
                 }
                 
+                boolean highModel = com.miniagent.core.ModelConstants.isHighModel(targetModel);
+                if (highModel) {
+                    genConfig.put("maxOutputTokens", 8192);
+                }
+
                 // Modulate temperature slightly on retry to break deterministic empty deadlocks
                 double retryMod = attempts > 1 ? 0.2 * attempts : 0.0;
                 if (temperature != null) genConfig.put("temperature", Math.min(2.0, temperature + retryMod));
@@ -135,7 +141,7 @@ public class GeminiHttpClient {
                 HttpRequest req = HttpRequest.newBuilder()
                         .uri(URI.create(url))
                         .header("Content-Type", "application/json")
-                        .timeout(Duration.ofSeconds(120))
+                        .timeout(highModel ? Duration.ofMinutes(15) : Duration.ofSeconds(120))
                         .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                         .build();
 
@@ -244,9 +250,15 @@ public class GeminiHttpClient {
 
             request.put("contents", List.of(contents));
             
+            boolean highModel = com.miniagent.core.ModelConstants.isHighModel(targetModel);
+            Map<String, Object> genConfig = new LinkedHashMap<>();
             if (temperature != null) {
-                Map<String, Object> genConfig = new LinkedHashMap<>();
                 genConfig.put("temperature", temperature);
+            }
+            if (highModel) {
+                genConfig.put("maxOutputTokens", 8192);
+            }
+            if (!genConfig.isEmpty()) {
                 request.put("generationConfig", genConfig);
             }
 
@@ -256,7 +268,7 @@ public class GeminiHttpClient {
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .header("Content-Type", "application/json")
-                    .timeout(Duration.ofSeconds(120))
+                    .timeout(highModel ? Duration.ofMinutes(15) : Duration.ofSeconds(120))
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 

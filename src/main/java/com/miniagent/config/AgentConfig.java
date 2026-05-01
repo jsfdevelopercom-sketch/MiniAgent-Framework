@@ -1,5 +1,7 @@
 package com.miniagent.config;
 
+import com.miniagent.core.ModelConstants;
+
 /**
  * AgentConfig is the primary configuration class for the MiniAgent architecture.
  * <p>
@@ -17,42 +19,43 @@ public class AgentConfig {
     private String claudeApiKey;
 
     // The topmost default models if the system chooses to fall back or auto-assign.
-    private String defaultOpenaiModel = "gpt-4o-mini";
-    private String defaultGeminiModel = "gemini-2.5-flash";
-    private String defaultClaudeModel = "claude-haiku-4-5-20251001";
+    private String defaultOpenaiModel = ModelConstants.GPT_4O_MINI;
+    private String defaultGeminiModel = ModelConstants.GEMINI_2_5_FLASH;
+    private String defaultClaudeModel = ModelConstants.CLAUDE_HAIKU_4_5;
     
-    private String topmostAllowedModel = "gpt-4o";
+    private String topmostAllowedOpenaiModel = ModelConstants.GPT_5_4_PREVIEW;
+    private String topmostAllowedGeminiModel = ModelConstants.GEMINI_3_1_PRO_PREVIEW;
 
     // --- Claude Models ---
-    private String claudeOpus46 = "claude-opus-4-6";
-    private String claudeSonnet46 = "claude-sonnet-4-6";
-    private String claudeHaiku45 = "claude-haiku-4-5-20251001";
+    private String claudeOpus46 = ModelConstants.CLAUDE_OPUS_4_6;
+    private String claudeSonnet46 = ModelConstants.CLAUDE_SONNET_4_6;
+    private String claudeHaiku45 = ModelConstants.CLAUDE_HAIKU_4_5;
 
     // --- Gemini Models ---
-    private String gemini31Pro = "gemini-3.1-pro-preview";
-    private String gemini3Flash = "gemini-3-flash-preview";
-    private String gemini31FlashLite = "gemini-3.1-flash-lite-preview";
-    private String gemini25Pro = "gemini-2.5-pro";
-    private String gemini25Flash = "gemini-2.5-flash";
-    private String gemini25FlashLite = "gemini-2.5-flash-lite";
+    private String gemini31Pro = ModelConstants.GEMINI_3_1_PRO_PREVIEW;
+    private String gemini3Flash = ModelConstants.GEMINI_3_FLASH_PREVIEW;
+    private String gemini31FlashLite = ModelConstants.GEMINI_3_1_FLASH_LITE_PREVIEW;
+    private String gemini25Pro = ModelConstants.GEMINI_2_5_PRO;
+    private String gemini25Flash = ModelConstants.GEMINI_2_5_FLASH;
+    private String gemini25FlashLite = ModelConstants.GEMINI_2_5_FLASH_LITE;
 
     // --- Gemini Specialty Models ---
-    private String geminiNanoBanana2 = "gemini-3.1-flash-image-preview";
-    private String geminiNanoBananaPro = "gemini-3-pro-image-preview";
-    private String geminiNanoBanana = "gemini-2.5-flash-image";
-    private String gemini31Live = "gemini-3.1-flash-live-preview";
-    private String gemini25Live = "gemini-2.5-flash-native-audio-preview-12-2025";
-    private String geminiDeepResearch = "deep-research-pro-preview-12-2025";
-    private String geminiVeo31 = "veo-3.1-generate-preview";
-    private String geminiLyria3Pro = "lyria-3-pro-preview";
+    private String geminiNanoBanana2 = ModelConstants.GEMINI_3_1_FLASH_IMAGE_PREVIEW;
+    private String geminiNanoBananaPro = ModelConstants.GEMINI_3_PRO_IMAGE_PREVIEW;
+    private String geminiNanoBanana = ModelConstants.GEMINI_2_5_FLASH_IMAGE;
+    private String gemini31Live = ModelConstants.GEMINI_3_1_FLASH_LIVE_PREVIEW;
+    private String gemini25Live = ModelConstants.GEMINI_2_5_FLASH_NATIVE_AUDIO_PREVIEW;
+    private String geminiDeepResearch = ModelConstants.GEMINI_DEEP_RESEARCH;
+    private String geminiVeo31 = ModelConstants.GEMINI_VEO_3_1;
+    private String geminiLyria3Pro = ModelConstants.GEMINI_LYRIA_3_PRO;
 
     // --- GPT Models ---
-    private String gpt4o = "gpt-4o";
-    private String gpt4oMini = "gpt-4o-mini";
-    private String o1Preview = "o1-preview";
-    private String o1Mini = "o1-mini";
+    private String gpt4o = ModelConstants.GPT_4O;
+    private String gpt4oMini = ModelConstants.GPT_4O_MINI;
+    private String o1Preview = ModelConstants.O1_PREVIEW;
+    private String o1Mini = ModelConstants.O1_MINI;
     // --- GPT-5 Models ---
-    private String gpt54 = "gpt-5.4";
+    private String gpt54 = ModelConstants.GPT_5_4_PREVIEW;
 
     public String getGpt54() {
         return gpt54;
@@ -189,22 +192,41 @@ public class AgentConfig {
     }
 
     /**
-     * Gets the topmost model that agents are allowed to escalate to during 
+     * Gets the topmost OpenAI model that agents are allowed to escalate to during 
      * highly complex repair cycles.
      * 
-     * @return the name of the top-tier model
+     * @return the name of the top-tier OpenAI model
      */
-    public String getTopmostAllowedModel() {
-        return topmostAllowedModel;
+    public String getTopmostAllowedOpenaiModel() {
+        return topmostAllowedOpenaiModel;
     }
 
     /**
-     * Assigns the topmost allowed model. This gatekeeping variable ensures
+     * Assigns the topmost allowed OpenAI model. This gatekeeping variable ensures
      * that autonomous agents do not spend excessive credits without approval.
      * 
-     * @param topmostAllowedModel the model name serving as the escalation ceiling
+     * @param topmostAllowedOpenaiModel the model name serving as the escalation ceiling
      */
-    public void setTopmostAllowedModel(String topmostAllowedModel) {
-        this.topmostAllowedModel = topmostAllowedModel;
+    public void setTopmostAllowedOpenaiModel(String topmostAllowedOpenaiModel) {
+        this.topmostAllowedOpenaiModel = topmostAllowedOpenaiModel;
+    }
+
+    /**
+     * Gets the topmost Gemini model that agents are allowed to escalate to during 
+     * highly complex repair cycles.
+     * 
+     * @return the name of the top-tier Gemini model
+     */
+    public String getTopmostAllowedGeminiModel() {
+        return topmostAllowedGeminiModel;
+    }
+
+    /**
+     * Assigns the topmost allowed Gemini model.
+     * 
+     * @param topmostAllowedGeminiModel the model name serving as the escalation ceiling
+     */
+    public void setTopmostAllowedGeminiModel(String topmostAllowedGeminiModel) {
+        this.topmostAllowedGeminiModel = topmostAllowedGeminiModel;
     }
 }

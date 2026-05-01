@@ -90,23 +90,22 @@ public class TokenCostManager {
         double inputCostUsdPerM = 0;
         double outputCostUsdPerM = 0;
 
-        if (lowerModel.contains("gpt-5-nano") || lowerModel.contains("gpt-4o-mini")) {
+        if (lowerModel.contains(ModelConstants.GPT_5_NANO) || lowerModel.contains(ModelConstants.GPT_4O_MINI)) {
             inputCostUsdPerM = 0.150; outputCostUsdPerM = 0.600;
-        } else if (lowerModel.contains("gpt-5.4") || lowerModel.contains("gpt-4o")) {
+        } else if (lowerModel.contains(ModelConstants.GPT_5_4_PREVIEW) || lowerModel.contains(ModelConstants.GPT_4O)) {
             inputCostUsdPerM = 5.00; outputCostUsdPerM = 15.00;
-        } else if (lowerModel.contains("gpt-4-turbo")) {
+        } else if (lowerModel.contains(ModelConstants.GPT_4_TURBO)) {
             inputCostUsdPerM = 10.00; outputCostUsdPerM = 30.00;
-        } else if (lowerModel.contains("gpt-3.5")) {
-            inputCostUsdPerM = 0.50; outputCostUsdPerM = 1.50;
-        } else if (lowerModel.contains("gemini-1.5-flash")) {
+
+        } else if (lowerModel.contains(ModelConstants.GEMINI_1_5_FLASH)) {
             inputCostUsdPerM = 0.075; outputCostUsdPerM = 0.30;
-        } else if (lowerModel.contains("gemini-1.5-pro")) {
+        } else if (lowerModel.contains(ModelConstants.GEMINI_1_5_PRO)) {
             inputCostUsdPerM = 3.50; outputCostUsdPerM = 10.50;
-        } else if (lowerModel.contains("claude-3-5-sonnet")) {
+        } else if (lowerModel.contains(ModelConstants.CLAUDE_3_5_SONNET)) {
             inputCostUsdPerM = 3.00; outputCostUsdPerM = 15.00;
-        } else if (lowerModel.contains("claude-3-5-haiku")) {
+        } else if (lowerModel.contains(ModelConstants.CLAUDE_3_5_HAIKU)) {
             inputCostUsdPerM = 0.25; outputCostUsdPerM = 1.25;
-        } else if (lowerModel.contains("claude-3-opus")) {
+        } else if (lowerModel.contains(ModelConstants.CLAUDE_3_OPUS)) {
             inputCostUsdPerM = 15.00; outputCostUsdPerM = 75.00;
         } else {
             // Default generic fallback

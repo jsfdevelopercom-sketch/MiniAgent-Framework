@@ -91,13 +91,19 @@ public class OpenAiHttpClient {
             // Force JSON object mode
             request.put("response_format", Map.of("type", "json_object"));
 
+            String activeModel = model != null ? model : config.getDefaultOpenaiModel();
+            boolean highModel = com.miniagent.core.ModelConstants.isHighModel(activeModel);
+            if (highModel) {
+                request.put("max_tokens", 16384);
+            }
+
             String requestBody = mapper.writeValueAsString(request);
 
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create("https://api.openai.com/v1/chat/completions"))
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
-                    .timeout(Duration.ofMinutes(5))
+                    .timeout(highModel ? Duration.ofMinutes(15) : Duration.ofMinutes(5))
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
@@ -158,13 +164,19 @@ public class OpenAiHttpClient {
             );
             request.put("messages", messages);
 
+            String activeModel = model != null ? model : config.getDefaultOpenaiModel();
+            boolean highModel = com.miniagent.core.ModelConstants.isHighModel(activeModel);
+            if (highModel) {
+                request.put("max_tokens", 16384);
+            }
+
             String requestBody = mapper.writeValueAsString(request);
 
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create("https://api.openai.com/v1/chat/completions"))
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
-                    .timeout(Duration.ofSeconds(45))
+                    .timeout(highModel ? Duration.ofMinutes(15) : Duration.ofSeconds(45))
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 

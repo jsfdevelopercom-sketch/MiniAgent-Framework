@@ -8,6 +8,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -44,9 +45,10 @@ public class ClaudeHttpClient {
         }
 
         try {
+            boolean highModel = com.miniagent.core.ModelConstants.isHighModel(model);
             Map<String, Object> request = new HashMap<>();
             request.put("model", model);
-            request.put("max_tokens", 4000);
+            request.put("max_tokens", highModel ? 8192 : 4000);
             request.put("system", systemPrompt);
             if (temperature != null) request.put("temperature", temperature);
 
@@ -72,6 +74,7 @@ public class ClaudeHttpClient {
                     .header("Content-Type", "application/json")
                     .header("x-api-key", apiKey)
                     .header("anthropic-version", "2023-06-01")
+                    .timeout(highModel ? Duration.ofMinutes(15) : Duration.ofSeconds(120))
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
@@ -131,9 +134,10 @@ public class ClaudeHttpClient {
         }
 
         try {
+            boolean highModel = com.miniagent.core.ModelConstants.isHighModel(model);
             Map<String, Object> request = new HashMap<>();
             request.put("model", model);
-            request.put("max_tokens", 4000);
+            request.put("max_tokens", highModel ? 8192 : 4000);
             request.put("system", systemPrompt);
             if (temperature != null) request.put("temperature", temperature);
 
@@ -148,6 +152,7 @@ public class ClaudeHttpClient {
                     .header("Content-Type", "application/json")
                     .header("x-api-key", apiKey)
                     .header("anthropic-version", "2023-06-01")
+                    .timeout(highModel ? Duration.ofMinutes(15) : Duration.ofSeconds(120))
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 

@@ -20,10 +20,10 @@ public class ModelFallbackPolicy {
 
     public ModelFallbackPolicy() {
         this(
-                "gpt-5.4-2026-03-05",
-                "gpt-5-nano-2025-08-07",
-                "gemini-3.1-flash-lite-preview",
-                "claude-haiku-4-5-20251001");
+                ModelConstants.GPT_5_4_PREVIEW,
+                ModelConstants.GPT_5_NANO,
+                ModelConstants.GEMINI_3_1_FLASH_LITE_PREVIEW,
+                ModelConstants.CLAUDE_HAIKU_4_5);
     }
 
     public ModelFallbackPolicy(
@@ -31,10 +31,10 @@ public class ModelFallbackPolicy {
             String openAiCheap,
             String geminiCheap,
             String claudeCheap) {
-        this.openAiReliable = clean(openAiReliable, "gpt-5.4-2026-03-05");
-        this.openAiCheap = clean(openAiCheap, "gpt-5-nano-2025-08-07");
-        this.geminiCheap = clean(geminiCheap, "gemini-3.1-flash-lite-preview");
-        this.claudeCheap = clean(claudeCheap, "claude-haiku-4-5-20251001");
+        this.openAiReliable = clean(openAiReliable, ModelConstants.GPT_5_4_PREVIEW);
+        this.openAiCheap = clean(openAiCheap, ModelConstants.GPT_5_NANO);
+        this.geminiCheap = clean(geminiCheap, ModelConstants.GEMINI_3_1_FLASH_LITE_PREVIEW);
+        this.claudeCheap = clean(claudeCheap, ModelConstants.CLAUDE_HAIKU_4_5);
     }
 
     public List<String> generationFallbacks(String preferredModel) {

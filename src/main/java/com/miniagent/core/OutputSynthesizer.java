@@ -34,7 +34,7 @@ public class OutputSynthesizer {
 
     private static final int MAX_SYNTHESIS_ATTEMPTS = 2;
     private static final int MAX_INPUT_CHARS = 120_000;
-    private static final String DEFAULT_SYNTH_MODEL = "gpt-4.1-mini";
+    private static final String DEFAULT_SYNTH_MODEL = ModelConstants.GPT_4_1_MINI;
 
     private final OpenAiHttpClient openAi;
     private final GeminiHttpClient gemini;
@@ -220,12 +220,12 @@ private boolean looksLikeLargeCodeAnswer(String text, String originalQuery) {
         String lower = preferredModel.toLowerCase(Locale.ROOT);
 
         if (lower.startsWith("gemini")) {
-            addUnique(models, "gpt-4.1-mini");
+            addUnique(models, ModelConstants.GPT_4_1_MINI);
         } else if (lower.startsWith("claude")) {
-            addUnique(models, "gpt-4.1-mini");
+            addUnique(models, ModelConstants.GPT_4_1_MINI);
         } else {
-            addUnique(models, "gpt-4.1-mini");
-            addUnique(models, "gemini-3.1-flash-lite-preview");
+            addUnique(models, ModelConstants.GPT_4_1_MINI);
+            addUnique(models, ModelConstants.GEMINI_3_1_FLASH_LITE_PREVIEW);
         }
 
         return models;

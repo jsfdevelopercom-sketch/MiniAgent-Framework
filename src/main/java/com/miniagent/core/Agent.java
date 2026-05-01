@@ -41,6 +41,8 @@ import java.util.concurrent.TimeoutException;
  */
 public class Agent {
 
+    public static boolean VERBOSE_LOGGING = true;
+
     private static final String DEFAULT_USER_ID = "anonymous";
     private static final String FAST_RUN_ID_PREFIX = "fast-";
     private static final String DEEP_RUN_ID_PREFIX = "deep-";
@@ -230,7 +232,7 @@ private boolean isLargeCodeGenerationRequest(
                 updateThought("Dispatching Fast Agent to generate draft...");
 
                 String personaModifier = buildTemperaturePersonaModifier(temperature);
-                String generatorModel = model == null || model.isBlank() ? "gpt-4.1-mini" : model.trim();
+                String generatorModel = model == null || model.isBlank() ? ModelConstants.GPT_4_1_MINI : model.trim();
 
                 long generationStart = System.currentTimeMillis();
 
@@ -270,13 +272,13 @@ private boolean isLargeCodeGenerationRequest(
                 StructuredResponse synthesized = synthesizer.synthesize(
                         draft,
                         safeQuery,
-                        "gpt-4.1-mini").normalize();
+                        ModelConstants.GPT_4_1_MINI).normalize();
 
                 recordStageUsage(
                         safeUserId,
                         runId,
                         "fast-synthesis",
-                        "gpt-4.1-mini",
+                        ModelConstants.GPT_4_1_MINI,
                         draft.getSummary(),
                         synthesized.getSummary());
 
@@ -285,7 +287,7 @@ private boolean isLargeCodeGenerationRequest(
                         safeUserId,
                         AgentTraceEventType.SYNTHESIS_FINISHED,
                         "fast-synthesis",
-                        "gpt-4.1-mini",
+                        ModelConstants.GPT_4_1_MINI,
                         "Fast synthesis finished.",
                         System.currentTimeMillis() - synthesisStart,
                         estimateTokens(draft.getSummary()),
@@ -438,12 +440,9 @@ private boolean isLargeCodeGenerationRequest(
                         estimateTokens(safeQuery),
                         estimateTokens(String.valueOf(classification)),
                         AgentTraceData.classification(classification));
-		System.out.println("Task classified as " +
-                                classification.taskType +
-                                " / " +
-                                classification.difficulty +
-                                " using pipeline " +
-                                classification.recommendedPipeline);
+                if (VERBOSE_LOGGING) {
+                    System.out.println("\n[VERBOSE] *** CLASSIFICATION: " + classification.taskType + " | PIPELINE: " + classification.recommendedPipeline + " ***\n");
+                }
                 updateThought(
                         "Task classified as " +
                                 classification.taskType +
@@ -498,6 +497,15 @@ private boolean isLargeCodeGenerationRequest(
                 }
 
                 ModelRoute route = modelRouter.route(classification, requestedModel);
+                
+                if (VERBOSE_LOGGING) {
+                    System.out.println("\n[VERBOSE] *** ROUTER ASSIGNMENTS ***");
+                    System.out.println("Generator: " + route.getGeneratorModel());
+                    System.out.println("Critic: " + route.getCriticModel());
+                    System.out.println("Repair: " + route.getRepairModel());
+                    System.out.println("Synthesizer: " + route.getSynthesizerModel());
+                    System.out.println("------------------------------------\n");
+                }
 
                 traceLogger.stage(
                         runId,
@@ -1439,6 +1447,13 @@ System.out.println("MODEL ROUTE "+"Model route selected: generator=" +
 
         StructuredResponse candidateDraft = generationResult.getValue().normalize();
 
+        if (VERBOSE_LOGGING) {
+            System.out.println("\n[VERBOSE] *** MODEL SELECTED FOR INITIAL GENERATION: " + generationResult.getModelUsed().toUpperCase() + " ***");
+            System.out.println("[VERBOSE] --- FIRST DRAFT ---");
+            System.out.println(candidateDraft.getSummary());
+            System.out.println("-----------------------------\n");
+        }
+
         recordStageUsage(
                 safeUserId,
                 runId,
@@ -1584,9 +1599,20 @@ System.out.println("MODEL ROUTE "+"Model route selected: generator=" +
             return null;
         }
 
-        StructuredResponse candidateDraft = repairResult.getValue().normalize();
+            StructuredResponse candidateDraft = repairResult.getValue().normalize();
 
-        recordStageUsage(
+            if (VERBOSE_LOGGING) {
+                System.out.println("\n[VERBOSE] *** MODEL SELECTED FOR REPAIR: " + repairResult.getModelUsed().toUpperCase() + " ***");
+                System.out.println("[VERBOSE] --- REPAIR INSTRUCTIONS ---");
+                System.out.println("Factuality Fixes: " + factualityFixes);
+                System.out.println("Structural Fixes: " + structuralFixes);
+                System.out.println("Missing Instructions: " + missingInstructions);
+                System.out.println("[VERBOSE] --- REPAIRED DRAFT ---");
+                System.out.println(candidateDraft.getSummary());
+                System.out.println("-----------------------------\n");
+            }
+
+            recordStageUsage(
                 safeUserId,
                 runId,
                 "repair",
@@ -1665,6 +1691,14 @@ System.out.println("MODEL ROUTE "+"Model route selected: generator=" +
         } else {
             eval = evaluationResult.getValue();
 
+            if (VERBOSE_LOGGING) {
+                System.out.println("\n[VERBOSE] *** MODEL SELECTED FOR EVALUATION CRITIC: " + evaluationResult.getModelUsed().toUpperCase() + " ***");
+                System.out.println("[VERBOSE] --- CRITIC EVALUATION RESULT ---");
+                System.out.println("Pass: " + eval.isPass());
+                System.out.println("Rationale: " + eval.getGeneralRationale());
+                System.out.println("------------------------------------------\n");
+            }
+
             recordStageUsage(
                     safeUserId,
                     runId,
@@ -1721,6 +1755,13 @@ System.out.println("MODEL ROUTE "+"Model route selected: generator=" +
                 best,
                 userQuery,
                 route.getSynthesizerModel()).normalize();
+
+        if (VERBOSE_LOGGING) {
+            System.out.println("\n[VERBOSE] *** MODEL SELECTED FOR FINAL SYNTHESIS: " + route.getSynthesizerModel().toUpperCase() + " ***");
+            System.out.println("[VERBOSE] --- FINAL DRAFT ---");
+            System.out.println(synthesized.getSummary());
+            System.out.println("-----------------------------\n");
+        }
 
         recordStageUsage(
                 state.getUserId(),

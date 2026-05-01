@@ -25,9 +25,9 @@ import java.util.Objects;
  */
 public class TaskClassifier {
 
-    private static final String DEFAULT_OPENAI_CLASSIFIER_MODEL = "gpt-5-nano-2025-08-07";
-    private static final String DEFAULT_GEMINI_CLASSIFIER_MODEL = "gemini-3.1-flash-lite-preview";
-    private static final String DEFAULT_CLAUDE_CLASSIFIER_MODEL = "claude-haiku-4-5-20251001";
+    private static final String DEFAULT_OPENAI_CLASSIFIER_MODEL = ModelConstants.GPT_5_NANO;
+    private static final String DEFAULT_GEMINI_CLASSIFIER_MODEL = ModelConstants.GEMINI_3_1_FLASH_LITE_PREVIEW;
+    private static final String DEFAULT_CLAUDE_CLASSIFIER_MODEL = ModelConstants.CLAUDE_HAIKU_4_5;
 
     private final OpenAiHttpClient openAiClient;
     private final GeminiHttpClient geminiClient;

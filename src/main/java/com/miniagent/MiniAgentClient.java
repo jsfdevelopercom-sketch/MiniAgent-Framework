@@ -137,7 +137,7 @@ public class MiniAgentClient {
         // Post-loop: Validate if we still failed heavily after max loops and escalate!
         if (lastEvaluation != null && lastEvaluation.hasCriticalFailure()) {
             // Failsafe Escalation Phase: If generation refuses to fix itself, escalate to Topmost Allowed Model
-            String topmostModel = config.getTopmostAllowedModel();
+            String topmostModel = config.getTopmostAllowedOpenaiModel();
             System.out.println("MiniAgent Framework: Repair loops exceeded. Escalating to TOPMOST MODEL: " + topmostModel);
             
             currentDraft = worker.repairDraft(

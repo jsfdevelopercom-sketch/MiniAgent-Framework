@@ -10,14 +10,14 @@ package com.miniagent.core;
  */
 public class ModelRouter {
 
-    private static final String OPENAI_CHEAP = "gpt-5-nano-2025-08-07";
-    private static final String OPENAI_STRONG = "gpt-5.4-2026-03-05";
+    private static final String OPENAI_CHEAP = ModelConstants.GPT_5_NANO;
+    private static final String OPENAI_STRONG = ModelConstants.GPT_5_4_PREVIEW;
 
-    private static final String GEMINI_CHEAP = "gemini-3.1-flash-lite-preview";
-    private static final String GEMINI_STRONG = "gemini-3.1-pro-preview";
+    private static final String GEMINI_CHEAP = ModelConstants.GEMINI_3_1_FLASH_LITE_PREVIEW;
+    private static final String GEMINI_STRONG = ModelConstants.GEMINI_3_1_PRO_PREVIEW;
 
-    private static final String CLAUDE_CHEAP = "claude-haiku-4-5-20251001";
-    private static final String CLAUDE_STRONG = "claude-sonnet-4-6";
+    private static final String CLAUDE_CHEAP = ModelConstants.CLAUDE_HAIKU_4_5;
+    private static final String CLAUDE_STRONG = ModelConstants.CLAUDE_SONNET_4_6;
 
     /**
      * Routes models based on task classification.
