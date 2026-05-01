@@ -68,7 +68,12 @@ public class OpenAiHttpClient {
             // Using /v1/chat/completions as it supports structured JSON outputs reliably
             Map<String, Object> request = new LinkedHashMap<>();
             request.put("model", model != null ? model : config.getDefaultOpenaiModel());
-            if (temperature != null) request.put("temperature", temperature);
+            boolean isGpt5 = model != null && model.startsWith("gpt-5");
+            if (!isGpt5 && temperature != null) {
+                request.put("temperature", temperature);
+            } else if (isGpt5) {
+                request.put("reasoning", Map.of("effort", "high"));
+            }
             
             List<Map<String, String>> messages = new java.util.ArrayList<>();
             messages.add(Map.of("role", "system", "content", systemPrompt));
@@ -92,7 +97,7 @@ public class OpenAiHttpClient {
                     .uri(URI.create("https://api.openai.com/v1/chat/completions"))
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
-                    .timeout(Duration.ofSeconds(45))
+                    .timeout(Duration.ofMinutes(5))
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 

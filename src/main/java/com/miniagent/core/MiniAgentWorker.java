@@ -69,6 +69,7 @@ public class MiniAgentWorker {
         } else {
             rawJson = openAiHttpClient.executeStructuredCall(model, sysPrompt, userPrompt, temperature, history);
         }
+        System.out.println("<<<<<<<<<<<<<<<<<<<<DERIVED OUTPUT>>>>>>>>>>>>>>>>>>>>>>>>>> \n\n\n\n");
         return parseToStructuredResult(rawJson);
     }
 

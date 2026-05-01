@@ -438,7 +438,12 @@ private boolean isLargeCodeGenerationRequest(
                         estimateTokens(safeQuery),
                         estimateTokens(String.valueOf(classification)),
                         AgentTraceData.classification(classification));
-
+		System.out.println("Task classified as " +
+                                classification.taskType +
+                                " / " +
+                                classification.difficulty +
+                                " using pipeline " +
+                                classification.recommendedPipeline);
                 updateThought(
                         "Task classified as " +
                                 classification.taskType +
@@ -470,6 +475,7 @@ private boolean isLargeCodeGenerationRequest(
                 }
 
                 if (classification.recommendedPipeline == TaskClassifier.RecommendedPipeline.ASK_USER_CLARIFICATION) {
+                System.out.println("USER CLARIFICATION NEEDED");
                     StructuredResponse clarify = StructuredResponse.fromSummary(
                             "I need one or two more details before I can safely complete this task.");
                     clarify.setThought_process("TaskClassifier routed the request to ASK_USER_CLARIFICATION.");
@@ -515,7 +521,15 @@ private boolean isLargeCodeGenerationRequest(
                         runId,
                         safeUserId,
                         safeQuery);
-
+System.out.println("MODEL ROUTE "+"Model route selected: generator=" +
+                        route.getGeneratorModel() +
+                        ", critic=" +
+                        route.getCriticModel() +
+                        ", repair=" +
+                        route.getRepairModel() +
+                        ", synthesizer=" +
+                        route.getSynthesizerModel());
+                        
                 updateThought("Model route selected: generator=" +
                         route.getGeneratorModel() +
                         ", critic=" +
@@ -641,6 +655,7 @@ private boolean isLargeCodeGenerationRequest(
                     }
 
                     EvaluationResult eval = runEvaluationStage(
+                            safeQuery,
                             runId,
                             safeUserId,
                             safeDataset,
@@ -1594,6 +1609,7 @@ private boolean isLargeCodeGenerationRequest(
     }
 
     private EvaluationResult runEvaluationStage(
+            String safeQuery,
             String runId,
             String safeUserId,
             Map<String, Object> safeDataset,
@@ -1611,7 +1627,7 @@ private boolean isLargeCodeGenerationRequest(
                 safeUserId,
                 route.getCriticModel(),
                 candidateDraft.getSummary(),
-                buildRigidRules(classification),
+                buildRigidRules(safeQuery, classification),
                 safeDataset,
                 Collections.emptyList(),
                 Collections.emptyList(),
@@ -1888,10 +1904,10 @@ private String buildInitialTaskInstruction(
                 repairMemory == null || repairMemory.isBlank() ? "No repair memory." : repairMemory);
     }
 
-    private List<String> buildRigidRules(TaskClassifier.TaskClassification classification) {
+    private List<String> buildRigidRules(String userQuery, TaskClassifier.TaskClassification classification) {
         List<String> rules = new ArrayList<>();
 
-        rules.add("The output must directly satisfy the original user task.");
+        rules.add("The output must directly satisfy the original user task: " + userQuery);
         rules.add("The output must not invent facts not present in the task or dataset.");
         rules.add("The output must be internally consistent.");
         rules.add("The output must avoid empty, generic, or evasive content.");
