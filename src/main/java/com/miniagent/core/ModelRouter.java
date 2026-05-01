@@ -11,7 +11,7 @@ package com.miniagent.core;
 public class ModelRouter {
 
     private static final String OPENAI_CHEAP = ModelConstants.GPT_5_NANO;
-    private static final String OPENAI_STRONG = ModelConstants.GPT_5_4_PREVIEW;
+    private static final String OPENAI_STRONG = ModelConstants.GPT_5_4;
 
     private static final String GEMINI_CHEAP = ModelConstants.GEMINI_3_1_FLASH_LITE_PREVIEW;
     private static final String GEMINI_STRONG = ModelConstants.GEMINI_3_1_PRO_PREVIEW;

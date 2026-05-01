@@ -92,7 +92,7 @@ public class TokenCostManager {
 
         if (lowerModel.contains(ModelConstants.GPT_5_NANO) || lowerModel.contains(ModelConstants.GPT_4O_MINI)) {
             inputCostUsdPerM = 0.150; outputCostUsdPerM = 0.600;
-        } else if (lowerModel.contains(ModelConstants.GPT_5_4_PREVIEW) || lowerModel.contains(ModelConstants.GPT_4O)) {
+        } else if (lowerModel.contains(ModelConstants.GPT_5_4) || lowerModel.contains(ModelConstants.GPT_4O)) {
             inputCostUsdPerM = 5.00; outputCostUsdPerM = 15.00;
         } else if (lowerModel.contains(ModelConstants.GPT_4_TURBO)) {
             inputCostUsdPerM = 10.00; outputCostUsdPerM = 30.00;

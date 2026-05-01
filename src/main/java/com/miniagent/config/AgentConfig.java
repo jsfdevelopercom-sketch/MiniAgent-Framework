@@ -23,7 +23,7 @@ public class AgentConfig {
     private String defaultGeminiModel = ModelConstants.GEMINI_2_5_FLASH;
     private String defaultClaudeModel = ModelConstants.CLAUDE_HAIKU_4_5;
     
-    private String topmostAllowedOpenaiModel = ModelConstants.GPT_5_4_PREVIEW;
+    private String topmostAllowedOpenaiModel = ModelConstants.GPT_5_4;
     private String topmostAllowedGeminiModel = ModelConstants.GEMINI_3_1_PRO_PREVIEW;
 
     // --- Claude Models ---
@@ -55,7 +55,7 @@ public class AgentConfig {
     private String o1Preview = ModelConstants.O1_PREVIEW;
     private String o1Mini = ModelConstants.O1_MINI;
     // --- GPT-5 Models ---
-    private String gpt54 = ModelConstants.GPT_5_4_PREVIEW;
+    private String gpt54 = ModelConstants.GPT_5_4;
 
     public String getGpt54() {
         return gpt54;

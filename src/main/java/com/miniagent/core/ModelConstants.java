@@ -57,7 +57,6 @@ public final class ModelConstants {
     public static final String GPT_5_2_PRO = "gpt-5.2-pro";
     public static final String GPT_5_3_CHAT_LATEST = "gpt-5.3-chat-latest";
     public static final String GPT_5_3_CODEX = "gpt-5.3-codex";
-    public static final String GPT_5_4_PREVIEW = "gpt-5.4-2026-03-05";
     public static final String GPT_5_4 = "gpt-5.4";
     public static final String GPT_5_4_MINI = "gpt-5.4-mini";
     public static final String GPT_5_4_NANO = "gpt-5.4-nano";
@@ -123,6 +122,23 @@ public final class ModelConstants {
     public static final String GEMINI_LYRIA_3_PRO = "lyria-3-pro-preview";
     public static final String GEMINI_1_5_FLASH = "gemini-1.5-flash";
     public static final String GEMINI_1_5_PRO = "gemini-1.5-pro";
+
+    // --- Model Classifications (Tags) ---
+    // High thinking, low speed
+    public static final java.util.Set<String> HIGH_THINKING_MODELS = java.util.Set.of(
+        GPT_5_5_PRO, GPT_5_4_PRO, O1_PRO, O3_PRO, GPT_5_PRO
+    );
+
+    // Medium thinking, medium/fast speed
+    public static final java.util.Set<String> MEDIUM_THINKING_MODELS = java.util.Set.of(
+        GPT_5_5, GPT_5_4, O1, O3, GPT_5, O1_PREVIEW
+    );
+
+    // Very fast speed, low thinking, cheap
+    public static final java.util.Set<String> FAST_LOW_THINKING_MODELS = java.util.Set.of(
+        GPT_5_4_MINI, GPT_5_4_NANO, GPT_5_MINI, GPT_5_NANO, O1_MINI, O3_MINI, O4_MINI, GPT_4O_MINI, GEMINI_2_5_FLASH, GEMINI_3_1_FLASH_LITE_PREVIEW, CLAUDE_HAIKU_4_5
+    );
+
     public static boolean isHighModel(String model) {
         if (model == null) return false;
         String lower = model.toLowerCase();

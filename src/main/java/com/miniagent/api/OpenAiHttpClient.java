@@ -72,7 +72,7 @@ public class OpenAiHttpClient {
             if (!isGpt5 && temperature != null) {
                 request.put("temperature", temperature);
             } else if (isGpt5) {
-                request.put("reasoning", Map.of("effort", "high"));
+                request.put("reasoning_effort", "high");
             }
             
             List<Map<String, String>> messages = new java.util.ArrayList<>();
@@ -94,7 +94,7 @@ public class OpenAiHttpClient {
             String activeModel = model != null ? model : config.getDefaultOpenaiModel();
             boolean highModel = com.miniagent.core.ModelConstants.isHighModel(activeModel);
             if (highModel) {
-                request.put("max_tokens", 16384);
+                request.put("max_completion_tokens", 16384);
             }
 
             String requestBody = mapper.writeValueAsString(request);
@@ -130,7 +130,7 @@ public class OpenAiHttpClient {
             return responseJson.trim();
 
         } catch (Exception e) {
-            throw new RuntimeException("Failed to invoke OpenAI structured call.", e);
+            throw new RuntimeException("Failed to invoke OpenAI structured call. Reason: " + e.getMessage(), e);
         }
     }
 
@@ -167,7 +167,7 @@ public class OpenAiHttpClient {
             String activeModel = model != null ? model : config.getDefaultOpenaiModel();
             boolean highModel = com.miniagent.core.ModelConstants.isHighModel(activeModel);
             if (highModel) {
-                request.put("max_tokens", 16384);
+                request.put("max_completion_tokens", 16384);
             }
 
             String requestBody = mapper.writeValueAsString(request);

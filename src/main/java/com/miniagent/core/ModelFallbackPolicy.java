@@ -20,7 +20,7 @@ public class ModelFallbackPolicy {
 
     public ModelFallbackPolicy() {
         this(
-                ModelConstants.GPT_5_4_PREVIEW,
+                ModelConstants.GPT_5_4,
                 ModelConstants.GPT_5_NANO,
                 ModelConstants.GEMINI_3_1_FLASH_LITE_PREVIEW,
                 ModelConstants.CLAUDE_HAIKU_4_5);
@@ -31,7 +31,7 @@ public class ModelFallbackPolicy {
             String openAiCheap,
             String geminiCheap,
             String claudeCheap) {
-        this.openAiReliable = clean(openAiReliable, ModelConstants.GPT_5_4_PREVIEW);
+        this.openAiReliable = clean(openAiReliable, ModelConstants.GPT_5_4);
         this.openAiCheap = clean(openAiCheap, ModelConstants.GPT_5_NANO);
         this.geminiCheap = clean(geminiCheap, ModelConstants.GEMINI_3_1_FLASH_LITE_PREVIEW);
         this.claudeCheap = clean(claudeCheap, ModelConstants.CLAUDE_HAIKU_4_5);
