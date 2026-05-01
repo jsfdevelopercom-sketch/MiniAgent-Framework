@@ -48,23 +48,46 @@ public class ClaudeHttpClient {
             boolean highModel = com.miniagent.core.ModelConstants.isHighModel(model);
             Map<String, Object> request = new HashMap<>();
             request.put("model", model);
-            request.put("max_tokens", highModel ? 8192 : 4000);
+            request.put("max_tokens", 4096);
             request.put("system", systemPrompt);
             if (temperature != null) request.put("temperature", temperature);
 
             List<Map<String, Object>> messages = new ArrayList<>();
-            if (history != null) {
+            String lastRole = null;
+            if (history != null && !history.isEmpty()) {
                 for (Map<String, String> hc : history) {
-                    messages.add(Map.of(
-                        "role", "user".equalsIgnoreCase(hc.getOrDefault("role", "")) ? "user" : "assistant",
-                        "content", hc.getOrDefault("content", "")
-                    ));
+                    String role = "user".equalsIgnoreCase(hc.getOrDefault("role", "")) ? "user" : "assistant";
+                    String content = hc.getOrDefault("content", "");
+                    
+                    if (role.equals(lastRole)) {
+                        Map<String, Object> lastMsg = messages.get(messages.size() - 1);
+                        lastMsg.put("content", lastMsg.get("content") + "\n\n" + content);
+                    } else {
+                        Map<String, Object> newMsg = new HashMap<>();
+                        newMsg.put("role", role);
+                        newMsg.put("content", content);
+                        messages.add(newMsg);
+                        lastRole = role;
+                    }
                 }
             }
-            messages.add(Map.of(
-                "role", "user",
-                "content", userPrompt + "\n\nRETURN ONLY VALID JSON. Start your response with { and end with }."
-            ));
+            if (!messages.isEmpty() && "assistant".equals(messages.get(0).get("role"))) {
+                Map<String, Object> dummy = new HashMap<>();
+                dummy.put("role", "user");
+                dummy.put("content", "(Conversation started)");
+                messages.add(0, dummy);
+            }
+
+            String finalUserPrompt = userPrompt + "\n\nRETURN ONLY VALID JSON. Start your response with { and end with }.";
+            if ("user".equals(lastRole)) {
+                Map<String, Object> lastMsg = messages.get(messages.size() - 1);
+                lastMsg.put("content", lastMsg.get("content") + "\n\n" + finalUserPrompt);
+            } else {
+                Map<String, Object> newMsg = new HashMap<>();
+                newMsg.put("role", "user");
+                newMsg.put("content", finalUserPrompt);
+                messages.add(newMsg);
+            }
             request.put("messages", messages);
 
             String requestBody = mapper.writeValueAsString(request);
@@ -137,7 +160,7 @@ public class ClaudeHttpClient {
             boolean highModel = com.miniagent.core.ModelConstants.isHighModel(model);
             Map<String, Object> request = new HashMap<>();
             request.put("model", model);
-            request.put("max_tokens", highModel ? 8192 : 4000);
+            request.put("max_tokens", 4096);
             request.put("system", systemPrompt);
             if (temperature != null) request.put("temperature", temperature);
 
