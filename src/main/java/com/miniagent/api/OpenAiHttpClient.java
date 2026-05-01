@@ -67,12 +67,19 @@ public class OpenAiHttpClient {
         try {
             // Using /v1/chat/completions as it supports structured JSON outputs reliably
             Map<String, Object> request = new LinkedHashMap<>();
-            request.put("model", model != null ? model : config.getDefaultOpenaiModel());
-            boolean isGpt5 = model != null && model.startsWith("gpt-5");
-            if (!isGpt5 && temperature != null) {
+            String activeModel = model != null ? model : config.getDefaultOpenaiModel();
+            boolean isResponsesApi = activeModel.endsWith("-pro") || activeModel.contains("deep-research") || activeModel.startsWith("o1-pro");
+            
+            request.put("model", activeModel);
+            if (com.miniagent.core.ModelConstants.HIGH_THINKING_MODELS.contains(activeModel)) {
+                if (isResponsesApi) request.put("reasoning", Map.of("effort", "high"));
+                else request.put("reasoning_effort", "high");
+            } else if (com.miniagent.core.ModelConstants.MEDIUM_THINKING_MODELS.contains(activeModel)) {
+                if (isResponsesApi) request.put("reasoning", Map.of("effort", "medium"));
+                else request.put("reasoning_effort", "medium");
+            }
+            if (temperature != null && !activeModel.startsWith("o1") && !activeModel.startsWith("o3") && !activeModel.startsWith("o4")) {
                 request.put("temperature", temperature);
-            } else if (isGpt5) {
-                request.put("reasoning_effort", "high");
             }
             
             List<Map<String, String>> messages = new java.util.ArrayList<>();
@@ -86,21 +93,40 @@ public class OpenAiHttpClient {
                 }
             }
             messages.add(Map.of("role", "user", "content", userPrompt));
-            request.put("messages", messages);
+            
+            if (isResponsesApi) {
+                request.put("input", messages);
+            } else {
+                request.put("messages", messages);
+            }
+            if (activeModel.contains("deep-research")) {
+                request.put("tools", List.of(Map.of("type", "web_search_preview")));
+            }
 
-            // Force JSON object mode
-            request.put("response_format", Map.of("type", "json_object"));
+            // Force JSON object mode if supported
+            if (!activeModel.contains("search") && !activeModel.contains("transcribe") && !activeModel.contains("diarize")) {
+                if (isResponsesApi) {
+                    request.put("text", Map.of("format", Map.of("type", "json_object")));
+                } else {
+                    request.put("response_format", Map.of("type", "json_object"));
+                }
+            }
 
-            String activeModel = model != null ? model : config.getDefaultOpenaiModel();
             boolean highModel = com.miniagent.core.ModelConstants.isHighModel(activeModel);
             if (highModel) {
-                request.put("max_completion_tokens", 16384);
+                if (isResponsesApi) request.put("max_output_tokens", 16384);
+                else request.put("max_completion_tokens", 16384);
             }
 
             String requestBody = mapper.writeValueAsString(request);
 
+            String endpoint = "https://api.openai.com/v1/chat/completions";
+            if (activeModel.endsWith("-pro") || activeModel.contains("deep-research") || activeModel.startsWith("o1-pro")) {
+                endpoint = "https://api.openai.com/v1/responses";
+            }
+
             HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create("https://api.openai.com/v1/chat/completions"))
+                    .uri(URI.create(endpoint))
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
                     .timeout(highModel ? Duration.ofMinutes(15) : Duration.ofMinutes(5))
@@ -155,25 +181,49 @@ public class OpenAiHttpClient {
 
         try {
             Map<String, Object> request = new LinkedHashMap<>();
-            request.put("model", model != null ? model : config.getDefaultOpenaiModel());
-            if (temperature != null) request.put("temperature", temperature);
+            String activeModel = model != null ? model : config.getDefaultOpenaiModel();
+            boolean isResponsesApi = activeModel.endsWith("-pro") || activeModel.contains("deep-research") || activeModel.startsWith("o1-pro");
+            
+            request.put("model", activeModel);
+            if (com.miniagent.core.ModelConstants.HIGH_THINKING_MODELS.contains(activeModel)) {
+                if (isResponsesApi) request.put("reasoning", Map.of("effort", "high"));
+                else request.put("reasoning_effort", "high");
+            } else if (com.miniagent.core.ModelConstants.MEDIUM_THINKING_MODELS.contains(activeModel)) {
+                if (isResponsesApi) request.put("reasoning", Map.of("effort", "medium"));
+                else request.put("reasoning_effort", "medium");
+            }
+            if (temperature != null && !activeModel.startsWith("o1") && !activeModel.startsWith("o3") && !activeModel.startsWith("o4")) {
+                request.put("temperature", temperature);
+            }
             
             List<Map<String, String>> messages = List.of(
                     Map.of("role", "system", "content", systemPrompt),
                     Map.of("role", "user", "content", userPrompt)
             );
-            request.put("messages", messages);
+            if (isResponsesApi) {
+                request.put("input", messages);
+            } else {
+                request.put("messages", messages);
+            }
+            if (activeModel.contains("deep-research")) {
+                request.put("tools", List.of(Map.of("type", "web_search_preview")));
+            }
 
-            String activeModel = model != null ? model : config.getDefaultOpenaiModel();
             boolean highModel = com.miniagent.core.ModelConstants.isHighModel(activeModel);
             if (highModel) {
-                request.put("max_completion_tokens", 16384);
+                if (isResponsesApi) request.put("max_output_tokens", 16384);
+                else request.put("max_completion_tokens", 16384);
             }
 
             String requestBody = mapper.writeValueAsString(request);
 
+            String endpoint = "https://api.openai.com/v1/chat/completions";
+            if (activeModel.endsWith("-pro") || activeModel.contains("deep-research") || activeModel.startsWith("o1-pro")) {
+                endpoint = "https://api.openai.com/v1/responses";
+            }
+
             HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create("https://api.openai.com/v1/chat/completions"))
+                    .uri(URI.create(endpoint))
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
                     .timeout(highModel ? Duration.ofMinutes(15) : Duration.ofSeconds(45))
@@ -191,7 +241,7 @@ public class OpenAiHttpClient {
             return messageNode.asText();
 
         } catch (Exception e) {
-            throw new RuntimeException("Failed to invoke OpenAI text call.", e);
+            throw new RuntimeException("Failed to invoke OpenAI text call. Reason: " + e.getMessage(), e);
         }
     }
 
