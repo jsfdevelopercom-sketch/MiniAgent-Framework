@@ -50,6 +50,29 @@ public class OpenAiHttpClient {
         return executeStructuredCall(model, systemPrompt, userPrompt, null, null);
     }
 
+    private String ensureJsonInstruction(String systemPrompt) {
+        String base = systemPrompt == null ? "" : systemPrompt.trim();
+
+        String jsonInstruction = """
+                Return only valid JSON.
+                Do not use markdown.
+                Do not wrap the JSON in code fences.
+                The JSON object must contain:
+                - "thought_process": a short private-work summary string
+                - "summary": the final user-facing answer string
+                """;
+
+        if (base.toLowerCase(Locale.ROOT).contains("json")) {
+            return base;
+        }
+
+        if (base.isBlank()) {
+            return jsonInstruction;
+        }
+
+        return base + "\n\n" + jsonInstruction;
+    }
+
     /**
      * Executes a generative call forcing the strict JSON output schema.
      * 
@@ -62,6 +85,8 @@ public class OpenAiHttpClient {
      */
     public String executeStructuredCall(String model, String systemPrompt, String userPrompt, Double temperature,
             List<Map<String, String>> history) {
+
+        systemPrompt = ensureJsonInstruction(systemPrompt);
         String apiKey = config.getOpenaiApiKey();
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException("OpenAI API key is missing from AgentConfig.");
@@ -126,9 +151,9 @@ public class OpenAiHttpClient {
             boolean highModel = com.miniagent.core.ModelConstants.isHighModel(activeModel);
             if (highModel) {
                 if (isResponsesApi)
-                    request.put("max_output_tokens", 16384);
+                    request.put("max_output_tokens", 49152);
                 else
-                    request.put("max_completion_tokens", 16384);
+                    request.put("max_completion_tokens", 49152);
             }
 
             String requestBody = mapper.writeValueAsString(request);
@@ -148,7 +173,8 @@ public class OpenAiHttpClient {
                     .build();
 
             HttpResponse<String> response = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-
+            System.out.println("OPENAI HTTP STATUS = " + response.statusCode());
+            System.out.println("OPENAI RAW BODY = " + response.body());
             if (response.statusCode() >= 400) {
                 throw new RuntimeException("OpenAI API Error HTTP " + response.statusCode() + ": " + response.body());
             }
@@ -225,15 +251,16 @@ public class OpenAiHttpClient {
             request.put("model", activeModel);
             if (com.miniagent.core.ModelConstants.HIGH_THINKING_MODELS.contains(activeModel)) {
                 if (isResponsesApi)
-                    request.put("reasoning", Map.of("effort", "high"));
+                    request.put("reasoning", Map.of("effort", "medium"));
                 else
-                    request.put("reasoning_effort", "high");
+                    request.put("reasoning_effort", "medium");
             } else if (com.miniagent.core.ModelConstants.MEDIUM_THINKING_MODELS.contains(activeModel)) {
                 if (isResponsesApi)
                     request.put("reasoning", Map.of("effort", "medium"));
                 else
                     request.put("reasoning_effort", "medium");
             }
+
             if (temperature != null && !activeModel.startsWith("o1") && !activeModel.startsWith("o3")
                     && !activeModel.startsWith("o4")) {
                 if (supportsTemperature(activeModel)) {
@@ -256,9 +283,9 @@ public class OpenAiHttpClient {
             boolean highModel = com.miniagent.core.ModelConstants.isHighModel(activeModel);
             if (highModel) {
                 if (isResponsesApi)
-                    request.put("max_output_tokens", 16384);
+                    request.put("max_output_tokens", 49152);
                 else
-                    request.put("max_completion_tokens", 16384);
+                    request.put("max_completion_tokens", 49152);
             }
 
             String requestBody = mapper.writeValueAsString(request);

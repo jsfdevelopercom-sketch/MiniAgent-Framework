@@ -218,59 +218,86 @@ public class ModelRouter {
      * Never call the ModelRoute constructor directly from routing branches.
      * This method is the safety gate that removes unsupported temperatures.
      */
-    private ModelRoute createRoute(
-            String generatorModel,
-            String criticModel,
-            String repairModel,
-            String synthesizerModel,
-            Double generatorTemperature,
-            Double criticTemperature,
-            Double repairTemperature,
-            Double synthesizerTemperature) {
+ /**
+ * Central ModelRoute factory.
+ *
+ * Do not return null temperatures here because the existing ModelRoute class
+ * stores primitive double fields. Returning null causes Java auto-unboxing
+ * to throw NullPointerException before DeepThink even starts.
+ *
+ * For high-control OpenAI models, we use 1.0 as a safe neutral value at the
+ * route level. The OpenAI HTTP client should still omit temperature entirely
+ * for these models using its supportsTemperature(...) guard.
+ */
+private ModelRoute createRoute(
+        String generatorModel,
+        String criticModel,
+        String repairModel,
+        String synthesizerModel,
+        Double generatorTemperature,
+        Double criticTemperature,
+        Double repairTemperature,
+        Double synthesizerTemperature) {
 
-        return new ModelRoute(
-                generatorModel,
-                criticModel,
-                repairModel,
-                synthesizerModel,
-                sanitizeTemperature(generatorModel, generatorTemperature),
-                sanitizeTemperature(criticModel, criticTemperature),
-                sanitizeTemperature(repairModel, repairTemperature),
-                sanitizeTemperature(synthesizerModel, synthesizerTemperature));
+    return new ModelRoute(
+            generatorModel,
+            criticModel,
+            repairModel,
+            synthesizerModel,
+            sanitizeTemperature(generatorModel, generatorTemperature),
+            sanitizeTemperature(criticModel, criticTemperature),
+            sanitizeTemperature(repairModel, repairTemperature),
+            sanitizeTemperature(synthesizerModel, synthesizerTemperature));
+}
+
+/**
+ * Returns a safe primitive temperature value for ModelRoute.
+ *
+ * Important:
+ * ModelRoute currently uses primitive double fields, so this method must
+ * never return null.
+ */
+private double sanitizeTemperature(String model, Double temperature) {
+    if (temperature == null) {
+        return 1.0;
     }
 
-    /**
-     * Removes temperature for models that reject custom sampling controls.
-     */
-    private Double sanitizeTemperature(String model, Double temperature) {
-        if (temperature == null) {
-            return null;
-        }
-
-        if (!supportsTemperature(model)) {
-            return null;
-        }
-
-        return temperature;
+    if (!supportsTemperature(model)) {
+        return 1.0;
     }
 
-    /**
-     * Returns whether a model can safely receive a custom temperature field.
-     *
-     * GPT-5 family, o-series, and deep-research models commonly require the
-     * provider default temperature. For those, omit temperature completely.
-     */
-    private boolean supportsTemperature(String model) {
-        if (model == null || model.isBlank()) {
-            return true;
-        }
-
-        String normalized = model.toLowerCase(Locale.ROOT).trim();
-
-        return !(normalized.startsWith("gpt-5")
-                || normalized.startsWith("o1")
-                || normalized.startsWith("o3")
-                || normalized.startsWith("o4")
-                || normalized.contains("deep-research"));
+    if (temperature.isNaN() || temperature.isInfinite()) {
+        return 1.0;
     }
+
+    if (temperature < 0.0) {
+        return 0.0;
+    }
+
+    if (temperature > 2.0) {
+        return 2.0;
+    }
+
+    return temperature;
+}
+
+/**
+ * Returns whether a model can safely receive a custom temperature field.
+ *
+ * GPT-5 family, o-series, and deep-research models should not receive
+ * custom temperature values in OpenAI request payloads.
+ */
+private boolean supportsTemperature(String model) {
+    if (model == null || model.isBlank()) {
+        return true;
+    }
+
+    String normalized = model.toLowerCase(Locale.ROOT).trim();
+
+    return !(normalized.startsWith("gpt-5")
+            || normalized.startsWith("o1")
+            || normalized.startsWith("o3")
+            || normalized.startsWith("o4")
+            || normalized.contains("deep-research"));
+}
 }

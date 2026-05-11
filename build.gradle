@@ -24,3 +24,9 @@ tasks.register('runTester', JavaExec) {
     mainClass = 'com.miniagent.api.ModelTester'
     classpath = sourceSets.main.runtimeClasspath
 }
+tasks.register('runOpenAiHardcodedTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs direct OpenAiHttpClient hardcoded test.'
+    mainClass = 'com.miniagent.api.OpenAiDirectHardcodedTest'
+    classpath = sourceSets.main.runtimeClasspath
+}

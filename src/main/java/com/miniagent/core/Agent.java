@@ -163,13 +163,8 @@ public class Agent {
                 q.contains("working code") ||
                 q.contains("must not include placeholders") ||
                 q.contains("no placeholders") ||
-                q.contains("like vscode") ||
-                q.contains("visual studio code") ||
-                q.contains("text editor") ||
                 q.contains("production ready") ||
-                q.contains("single file") ||
-                q.contains("html js") ||
-                q.contains("html javascript");
+                q.contains("single file");
 
         return classifiedAsCode && userExplicitlyWantsLargeCode;
     }
