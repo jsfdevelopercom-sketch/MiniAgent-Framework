@@ -761,7 +761,7 @@ public class Agent {
         });
 
         try {
-            StructuredResponse response = future.get(900, TimeUnit.SECONDS);
+            StructuredResponse response = future.get(1000, TimeUnit.SECONDS);
             updateThought("DeepThink completed.");
             return response;
         } catch (TimeoutException e) {

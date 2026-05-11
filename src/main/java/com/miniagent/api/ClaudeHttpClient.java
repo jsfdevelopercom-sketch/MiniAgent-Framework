@@ -38,7 +38,8 @@ public class ClaudeHttpClient {
     /**
      * Executes a call expecting a structured JSON response.
      */
-    public String executeStructuredCall(String model, String systemPrompt, String userPrompt, Double temperature, List<Map<String, String>> history) {
+    public String executeStructuredCall(String model, String systemPrompt, String userPrompt, Double temperature,
+            List<Map<String, String>> history) {
         String apiKey = config.getClaudeApiKey();
         if (apiKey == null || apiKey.isBlank()) {
             throw new RuntimeException("Claude API key is not configured.");
@@ -50,7 +51,8 @@ public class ClaudeHttpClient {
             request.put("model", model);
             request.put("max_tokens", 4096);
             request.put("system", systemPrompt);
-            if (temperature != null) request.put("temperature", temperature);
+            if (temperature != null)
+                request.put("temperature", temperature);
 
             List<Map<String, Object>> messages = new ArrayList<>();
             String lastRole = null;
@@ -58,7 +60,7 @@ public class ClaudeHttpClient {
                 for (Map<String, String> hc : history) {
                     String role = "user".equalsIgnoreCase(hc.getOrDefault("role", "")) ? "user" : "assistant";
                     String content = hc.getOrDefault("content", "");
-                    
+
                     if (role.equals(lastRole)) {
                         Map<String, Object> lastMsg = messages.get(messages.size() - 1);
                         lastMsg.put("content", lastMsg.get("content") + "\n\n" + content);
@@ -78,7 +80,8 @@ public class ClaudeHttpClient {
                 messages.add(0, dummy);
             }
 
-            String finalUserPrompt = userPrompt + "\n\nRETURN ONLY VALID JSON. Start your response with { and end with }.";
+            String finalUserPrompt = userPrompt
+                    + "\n\nRETURN ONLY VALID JSON. Start your response with { and end with }.";
             if ("user".equals(lastRole)) {
                 Map<String, Object> lastMsg = messages.get(messages.size() - 1);
                 lastMsg.put("content", lastMsg.get("content") + "\n\n" + finalUserPrompt);
@@ -91,13 +94,13 @@ public class ClaudeHttpClient {
             request.put("messages", messages);
 
             String requestBody = mapper.writeValueAsString(request);
-            
+
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create("https://api.anthropic.com/v1/messages"))
                     .header("Content-Type", "application/json")
                     .header("x-api-key", apiKey)
                     .header("anthropic-version", "2023-06-01")
-                    .timeout(highModel ? Duration.ofMinutes(15) : Duration.ofSeconds(120))
+                    .timeout(highModel ? Duration.ofMinutes(4) : Duration.ofSeconds(120))
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
@@ -113,10 +116,11 @@ public class ClaudeHttpClient {
             StringBuilder textBuilder = new StringBuilder();
             if (contentNode.isArray()) {
                 for (JsonNode c : contentNode) {
-                    if (c.has("text")) textBuilder.append(c.get("text").asText());
+                    if (c.has("text"))
+                        textBuilder.append(c.get("text").asText());
                 }
             }
-            
+
             if (textBuilder.length() == 0) {
                 System.err.println("[CLAUDE WARNING] Empty response: " + response.body());
                 return "{\"thought_process\":\"Claude returned an empty frame.\",\"summary\":\"Sorry, but Claude generated an empty response.\",\"convo\":\"\"}";
@@ -147,8 +151,10 @@ public class ClaudeHttpClient {
     }
 
     /**
-     * Executes a raw conversational query specifically designed for the GD Room persona.
-     * Takes an optional token override per the architecture spec securely mapping user BYOT keys.
+     * Executes a raw conversational query specifically designed for the GD Room
+     * persona.
+     * Takes an optional token override per the architecture spec securely mapping
+     * user BYOT keys.
      */
     public String executeTextCall(String model, String systemPrompt, String userPrompt, Double temperature) {
         String apiKey = config.getClaudeApiKey();
@@ -162,20 +168,20 @@ public class ClaudeHttpClient {
             request.put("model", model);
             request.put("max_tokens", 4096);
             request.put("system", systemPrompt);
-            if (temperature != null) request.put("temperature", temperature);
+            if (temperature != null)
+                request.put("temperature", temperature);
 
             request.put("messages", List.of(
-                Map.of("role", "user", "content", userPrompt)
-            ));
+                    Map.of("role", "user", "content", userPrompt)));
 
             String requestBody = mapper.writeValueAsString(request);
-            
+
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create("https://api.anthropic.com/v1/messages"))
                     .header("Content-Type", "application/json")
                     .header("x-api-key", apiKey)
                     .header("anthropic-version", "2023-06-01")
-                    .timeout(highModel ? Duration.ofMinutes(15) : Duration.ofSeconds(120))
+                    .timeout(highModel ? Duration.ofMinutes(4) : Duration.ofSeconds(120))
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
@@ -191,10 +197,12 @@ public class ClaudeHttpClient {
             StringBuilder textBuilder = new StringBuilder();
             if (contentNode.isArray()) {
                 for (JsonNode c : contentNode) {
-                    if (c.has("text")) textBuilder.append(c.get("text").asText());
+                    if (c.has("text"))
+                        textBuilder.append(c.get("text").asText());
                 }
             }
-            return textBuilder.length() == 0 ? "Claude produced an empty message structure." : textBuilder.toString().trim();
+            return textBuilder.length() == 0 ? "Claude produced an empty message structure."
+                    : textBuilder.toString().trim();
 
         } catch (Exception e) {
             return "Claude network disruption: " + e.getMessage();

@@ -16,9 +16,11 @@ import java.util.Map;
 import java.util.ArrayList;
 
 /**
- * GeminiHttpClient acts as the native networking bridge to Google's Gemini models.
+ * GeminiHttpClient acts as the native networking bridge to Google's Gemini
+ * models.
  * <p>
- * Given Gemini's slightly different payload expectations compared to OpenAI, this
+ * Given Gemini's slightly different payload expectations compared to OpenAI,
+ * this
  * client serializes the prompts into Gemini's "contents" and "parts" arrays.
  */
 public class GeminiHttpClient {
@@ -55,14 +57,15 @@ public class GeminiHttpClient {
     /**
      * Executes a generative call forcing JSON output format.
      *
-     * @param model the Gemini model name
+     * @param model        the Gemini model name
      * @param systemPrompt the system-level guidelines
-     * @param userPrompt the specific user tasks
-     * @param temperature the logical temperature randomness parameter (optional)
-     * @param history the raw conversational mapping arrays
+     * @param userPrompt   the specific user tasks
+     * @param temperature  the logical temperature randomness parameter (optional)
+     * @param history      the raw conversational mapping arrays
      * @return the raw JSON generated output
      */
-    public String executeStructuredCall(String model, String systemPrompt, String userPrompt, Double temperature, List<Map<String, String>> history) {
+    public String executeStructuredCall(String model, String systemPrompt, String userPrompt, Double temperature,
+            List<Map<String, String>> history) {
         String apiKey = config.getGeminiApiKey();
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException("Gemini API key is missing from AgentConfig.");
@@ -72,7 +75,7 @@ public class GeminiHttpClient {
 
         int attempts = 0;
         int maxAttempts = 3;
-        
+
         while (attempts < maxAttempts) {
             attempts++;
             try {
@@ -83,40 +86,41 @@ public class GeminiHttpClient {
                 if (history != null && attempts == 1) {
                     for (Map<String, String> h : history) {
                         String role = "user".equalsIgnoreCase(h.get("role")) ? "user" : "model";
-                        
+
                         Map<String, Object> part = new LinkedHashMap<>();
                         part.put("text", h.getOrDefault("content", ""));
                         if (h.containsKey("thoughtSignature") && !h.get("thoughtSignature").isBlank()) {
                             part.put("thoughtSignature", h.get("thoughtSignature"));
                         }
-                        
+
                         Map<String, Object> contentMap = new LinkedHashMap<>();
                         contentMap.put("role", role);
                         contentMap.put("parts", List.of(part));
-                        
+
                         contentsList.add(contentMap);
                     }
                 } else if (attempts > 1 && history != null && !history.isEmpty()) {
-                    System.out.println("[GEMINI] Retry detected in structured schema. Dropping poisoned history to bypass legacy safety blocks.");
+                    System.out.println(
+                            "[GEMINI] Retry detected in structured schema. Dropping poisoned history to bypass legacy safety blocks.");
                 }
-                
+
                 // Final Prompt Payload
                 contentsList.add(Map.of(
-                    "role", "user", 
-                    "parts", List.of(Map.of("text", "SYSTEM INSTRUCTION:\n" + systemPrompt + "\n\nUSER PROMPT:\n" + userPrompt))
-                ));
+                        "role", "user",
+                        "parts", List.of(Map.of("text",
+                                "SYSTEM INSTRUCTION:\n" + systemPrompt + "\n\nUSER PROMPT:\n" + userPrompt))));
                 request.put("contents", contentsList);
-                
+
                 // Force strict JSON output generation for supported v1beta models
                 Map<String, Object> genConfig = new LinkedHashMap<>();
                 genConfig.put("responseMimeType", "application/json");
-                
+
                 if (targetModel.contains(ModelConstants.GEMINI_3_1_PRO_PREVIEW)) {
                     Map<String, Object> thinkingCfg = new LinkedHashMap<>();
                     thinkingCfg.put("thinkingLevel", "high");
                     genConfig.put("thinkingConfig", thinkingCfg);
                 }
-                
+
                 boolean highModel = com.miniagent.core.ModelConstants.isHighModel(targetModel);
                 if (highModel) {
                     genConfig.put("maxOutputTokens", 8192);
@@ -124,7 +128,8 @@ public class GeminiHttpClient {
 
                 // Modulate temperature slightly on retry to break deterministic empty deadlocks
                 double retryMod = attempts > 1 ? 0.2 * attempts : 0.0;
-                if (temperature != null) genConfig.put("temperature", Math.min(2.0, temperature + retryMod));
+                if (temperature != null)
+                    genConfig.put("temperature", Math.min(2.0, temperature + retryMod));
                 request.put("generationConfig", genConfig);
 
                 // Disable all safety settings to prevent Empty Node blocking
@@ -136,23 +141,27 @@ public class GeminiHttpClient {
                 request.put("safetySettings", safetySettings);
 
                 String requestBody = mapper.writeValueAsString(request);
-                String url = "https://generativelanguage.googleapis.com/v1beta/models/" + targetModel + ":generateContent?key=" + apiKey;
+                String url = "https://generativelanguage.googleapis.com/v1beta/models/" + targetModel
+                        + ":generateContent?key=" + apiKey;
 
                 HttpRequest req = HttpRequest.newBuilder()
                         .uri(URI.create(url))
                         .header("Content-Type", "application/json")
-                        .timeout(highModel ? Duration.ofMinutes(15) : Duration.ofSeconds(120))
+                        .timeout(highModel ? Duration.ofMinutes(4) : Duration.ofSeconds(120))
                         .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                         .build();
 
                 HttpResponse<String> response = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
 
                 if (response.statusCode() >= 400) {
-                    if (response.statusCode() == 400 || response.statusCode() == 401 || response.statusCode() == 403 || response.statusCode() == 404) {
-                        throw new RuntimeException("Gemini API Error HTTP " + response.statusCode() + ": " + response.body());
+                    if (response.statusCode() == 400 || response.statusCode() == 401 || response.statusCode() == 403
+                            || response.statusCode() == 404) {
+                        throw new RuntimeException(
+                                "Gemini API Error HTTP " + response.statusCode() + ": " + response.body());
                     }
                     if (attempts == maxAttempts) {
-                        throw new RuntimeException("Gemini Timeout/Server Error HTTP " + response.statusCode() + ": " + response.body());
+                        throw new RuntimeException(
+                                "Gemini Timeout/Server Error HTTP " + response.statusCode() + ": " + response.body());
                     }
                     continue; // Auto-retry only on 500s or 429s natively
                 }
@@ -162,13 +171,15 @@ public class GeminiHttpClient {
                 StringBuilder tb = new StringBuilder();
                 if (partsNode.isArray()) {
                     for (JsonNode part : partsNode) {
-                        if (part.has("text")) tb.append(part.get("text").asText());
+                        if (part.has("text"))
+                            tb.append(part.get("text").asText());
                     }
                 }
                 String responseJson = tb.toString().trim();
-                
+
                 if (responseJson.isEmpty()) {
-                    System.err.println("[GEMINI WARNING] Empty payload detected on attempt " + attempts + ". Retrying natively...");
+                    System.err.println("[GEMINI WARNING] Empty payload detected on attempt " + attempts
+                            + ". Retrying natively...");
                     if (attempts == maxAttempts) {
                         return "{\"thought_process\":\"Gemini generated an empty response payload repeatedly. Safety filters natively engaged.\",\"summary\":\"Google Safety Filters actively blocked this prompt due to flagged content. Please revise your query and try again safely.\",\"convo\":\"\"}";
                     }
@@ -186,31 +197,35 @@ public class GeminiHttpClient {
                         responseJson = responseJson.substring(0, responseJson.length() - 3);
                     }
                 }
-                
-                // Extract and inject encrypted thought signature natively 
+
+                // Extract and inject encrypted thought signature natively
                 JsonNode sigNode = root.findValue("thoughtSignature");
-                if (sigNode == null) sigNode = root.findValue("thought_signature");
-                if (sigNode == null) sigNode = root.findValue("thoughtCall");
-                
+                if (sigNode == null)
+                    sigNode = root.findValue("thought_signature");
+                if (sigNode == null)
+                    sigNode = root.findValue("thoughtCall");
+
                 if (sigNode != null && sigNode.isTextual()) {
                     try {
-                        com.fasterxml.jackson.databind.node.ObjectNode resObj = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(responseJson);
+                        com.fasterxml.jackson.databind.node.ObjectNode resObj = (com.fasterxml.jackson.databind.node.ObjectNode) mapper
+                                .readTree(responseJson);
                         resObj.put("thoughtSignature", sigNode.asText());
                         responseJson = mapper.writeValueAsString(resObj);
                     } catch (Exception parseEx) {
                         System.err.println("[GEMINI] Could not natively re-inject signature into block schema.");
                     }
                 }
-                
+
                 return responseJson.trim();
 
             } catch (Exception e) {
                 if (attempts == maxAttempts) {
-                    throw new RuntimeException("Failed to invoke Gemini structured call completely. Reason: " + e.getMessage(), e);
+                    throw new RuntimeException(
+                            "Failed to invoke Gemini structured call completely. Reason: " + e.getMessage(), e);
                 }
             }
         }
-        
+
         return "{\"thought_process\":\"Gemini backend failed.\",\"summary\":\"Failure.\",\"convo\":\"\"}";
     }
 
@@ -221,10 +236,10 @@ public class GeminiHttpClient {
     /**
      * Executes a generative text-only call.
      * 
-     * @param model the Gemini model name (e.g., gemini-1.5-flash)
+     * @param model        the Gemini model name (e.g., gemini-1.5-flash)
      * @param systemPrompt the system-level guidelines
-     * @param userPrompt the specific user tasks or context
-     * @param temperature the generation temperature logic
+     * @param userPrompt   the specific user tasks or context
+     * @param temperature  the generation temperature logic
      * @return the plain text generated output
      */
     public String executeTextCall(String model, String systemPrompt, String userPrompt, Double temperature) {
@@ -236,20 +251,21 @@ public class GeminiHttpClient {
         String targetModel = model != null ? model : config.getDefaultGeminiModel();
 
         try {
-            // Gemini expects "system_instruction" separately in some v1beta APIs, 
+            // Gemini expects "system_instruction" separately in some v1beta APIs,
             // but combining them in the user prompt is often safer for standard v1.
             // This maps strictly to standard "generateContent".
             Map<String, Object> request = new LinkedHashMap<>();
-            
+
             Map<String, Object> contents = new LinkedHashMap<>();
             contents.put("role", "user");
-            
-            // For stability, prepend system prompt to the user text if system_instructions isn't formally used
+
+            // For stability, prepend system prompt to the user text if system_instructions
+            // isn't formally used
             String combinedText = "SYSTEM INSTRUCTION:\n" + systemPrompt + "\n\nUSER PROMPT:\n" + userPrompt;
             contents.put("parts", List.of(Map.of("text", combinedText)));
 
             request.put("contents", List.of(contents));
-            
+
             boolean highModel = com.miniagent.core.ModelConstants.isHighModel(targetModel);
             Map<String, Object> genConfig = new LinkedHashMap<>();
             if (temperature != null) {
@@ -263,17 +279,18 @@ public class GeminiHttpClient {
             }
 
             String requestBody = mapper.writeValueAsString(request);
-            String url = "https://generativelanguage.googleapis.com/v1beta/models/" + targetModel + ":generateContent?key=" + apiKey;
+            String url = "https://generativelanguage.googleapis.com/v1beta/models/" + targetModel
+                    + ":generateContent?key=" + apiKey;
 
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .header("Content-Type", "application/json")
-                    .timeout(highModel ? Duration.ofMinutes(15) : Duration.ofSeconds(120))
+                    .timeout(highModel ? Duration.ofMinutes(4) : Duration.ofSeconds(120))
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
             HttpResponse<String> response = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-            
+
             if (response.statusCode() >= 400) {
                 throw new RuntimeException("Gemini API Error HTTP " + response.statusCode() + ": " + response.body());
             }
@@ -283,7 +300,8 @@ public class GeminiHttpClient {
             StringBuilder tb = new StringBuilder();
             if (partsNode.isArray()) {
                 for (JsonNode part : partsNode) {
-                    if (part.has("text")) tb.append(part.get("text").asText());
+                    if (part.has("text"))
+                        tb.append(part.get("text").asText());
                 }
             }
             if (tb.length() == 0) {
