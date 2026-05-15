@@ -100,7 +100,7 @@ public class ClaudeHttpClient {
                     .header("Content-Type", "application/json")
                     .header("x-api-key", apiKey)
                     .header("anthropic-version", "2023-06-01")
-                    .timeout(highModel ? Duration.ofMinutes(4) : Duration.ofSeconds(120))
+                    .timeout(highModel ? Duration.ofMinutes(7) : Duration.ofMinutes(3))
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
@@ -181,7 +181,7 @@ public class ClaudeHttpClient {
                     .header("Content-Type", "application/json")
                     .header("x-api-key", apiKey)
                     .header("anthropic-version", "2023-06-01")
-                    .timeout(highModel ? Duration.ofMinutes(4) : Duration.ofSeconds(120))
+                    .timeout(highModel ? Duration.ofMinutes(7) : Duration.ofMinutes(3))
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 

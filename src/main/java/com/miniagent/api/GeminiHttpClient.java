@@ -147,7 +147,7 @@ public class GeminiHttpClient {
                 HttpRequest req = HttpRequest.newBuilder()
                         .uri(URI.create(url))
                         .header("Content-Type", "application/json")
-                        .timeout(highModel ? Duration.ofMinutes(4) : Duration.ofSeconds(120))
+                        .timeout(highModel ? Duration.ofMinutes(7) : Duration.ofMinutes(3))
                         .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                         .build();
 
@@ -185,18 +185,21 @@ public class GeminiHttpClient {
                     }
                     continue; // Auto-retry
                 }
-                // Strip markdown wrappers if they exist
-                if (responseJson.startsWith("```json")) {
-                    responseJson = responseJson.substring(7);
-                    if (responseJson.endsWith("```")) {
-                        responseJson = responseJson.substring(0, responseJson.length() - 3);
-                    }
-                } else if (responseJson.startsWith("```")) {
-                    responseJson = responseJson.substring(3);
-                    if (responseJson.endsWith("```")) {
-                        responseJson = responseJson.substring(0, responseJson.length() - 3);
+                // Strip markdown wrappers more robustly (handles conversational filler)
+                int jsonStart = responseJson.indexOf("```json");
+                if (jsonStart != -1) {
+                    responseJson = responseJson.substring(jsonStart + 7);
+                } else {
+                    int mdStart = responseJson.indexOf("```");
+                    if (mdStart != -1) {
+                        responseJson = responseJson.substring(mdStart + 3);
                     }
                 }
+                int mdEnd = responseJson.lastIndexOf("```");
+                if (mdEnd != -1) {
+                    responseJson = responseJson.substring(0, mdEnd);
+                }
+                responseJson = responseJson.trim();
 
                 // Extract and inject encrypted thought signature natively
                 JsonNode sigNode = root.findValue("thoughtSignature");
@@ -207,12 +210,16 @@ public class GeminiHttpClient {
 
                 if (sigNode != null && sigNode.isTextual()) {
                     try {
-                        com.fasterxml.jackson.databind.node.ObjectNode resObj = (com.fasterxml.jackson.databind.node.ObjectNode) mapper
-                                .readTree(responseJson);
-                        resObj.put("thoughtSignature", sigNode.asText());
-                        responseJson = mapper.writeValueAsString(resObj);
+                        JsonNode parsedNode = mapper.readTree(responseJson);
+                        if (parsedNode != null && parsedNode.isObject()) {
+                            com.fasterxml.jackson.databind.node.ObjectNode resObj = (com.fasterxml.jackson.databind.node.ObjectNode) parsedNode;
+                            resObj.put("thoughtSignature", sigNode.asText());
+                            responseJson = mapper.writeValueAsString(resObj);
+                        } else {
+                            System.err.println("[GEMINI WARNING] Could not re-inject signature. Response is not a JSON object.");
+                        }
                     } catch (Exception parseEx) {
-                        System.err.println("[GEMINI] Could not natively re-inject signature into block schema.");
+                        System.err.println("[GEMINI WARNING] Could not natively re-inject signature. Malformed JSON: " + parseEx.getMessage());
                     }
                 }
 
@@ -285,7 +292,7 @@ public class GeminiHttpClient {
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .header("Content-Type", "application/json")
-                    .timeout(highModel ? Duration.ofMinutes(4) : Duration.ofSeconds(120))
+                    .timeout(highModel ? Duration.ofMinutes(7) : Duration.ofMinutes(3))
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
