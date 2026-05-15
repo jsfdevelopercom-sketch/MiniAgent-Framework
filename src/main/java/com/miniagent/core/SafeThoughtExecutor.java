@@ -7,30 +7,34 @@ import com.miniagent.trace.AgentTraceLogger;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
 /**
- * SafeThoughtExecutor wraps worker/evaluator model calls with:
- * - provider fallback
- * - blank-output detection
- * - malformed-output detection
- * - safety-block detection
- * - exception classification
- * - compact failure records
- * - deterministic draft sanity validation
+ * SafeThoughtExecutor wraps MiniAgentWorker and MiniAgentEvaluator calls with
+ * reliable fallback, validation, and recovery-friendly failure records.
  *
- * This class should be used by Agent instead of calling MiniAgentWorker
- * directly.
+ * Important architectural rule:
+ * This class must NOT classify the user's task again.
  *
- * Important production rule:
- * Large code generation, serious debugging, architecture, and implementation
- * tasks must not quietly fall from strong models into nano/cheap models. Cheap
- * models are useful for title generation, light synthesis, and simple recovery,
- * but they can collapse a complete app request into a toy demo. This executor
- * therefore selects strong fallback paths whenever the current stage looks like
- * serious code or software-engineering work.
+ * Task identity, difficulty, budget, pipeline, tool need, and depth are already
+ * decided earlier by:
+ *
+ * TaskClassifier -> ModelRouter -> AgentRunPlan
+ *
+ * SafeThoughtExecutor should only consume that decision. It should not run
+ * keyword-based "serious code" detection or secretly override the classifier.
+ *
+ * Why this matters:
+ * - Code is only one category of hard tasks.
+ * - Medical reasoning, research, architecture, financial/legal reasoning,
+ * summarization of large context, and tool-heavy tasks can require equal or
+ * stronger fallback protection.
+ * - Repeating classification inside this class creates contradictory behavior:
+ * the classifier may say "HARD RESEARCH" but this class may treat it as normal
+ * because it does not look like code.
  */
 public class SafeThoughtExecutor {
 
@@ -40,19 +44,12 @@ public class SafeThoughtExecutor {
         private final AgentTraceLogger traceLogger;
         private final DraftSanityValidator draftSanityValidator;
 
-        /**
-         * Creates a fault-tolerant executor for MiniAgent thought stages.
-         *
-         * The worker is responsible for draft/repair generation. The evaluator is
-         * responsible for critic scoring. The fallback policy controls which models
-         * are tried when a provider fails, returns malformed output, or fails sanity
-         * validation.
-         */
         public SafeThoughtExecutor(
                         MiniAgentWorker worker,
                         MiniAgentEvaluator evaluator,
                         ModelFallbackPolicy fallbackPolicy,
                         AgentTraceLogger traceLogger) {
+
                 if (worker == null) {
                         throw new IllegalArgumentException("MiniAgentWorker cannot be null.");
                 }
@@ -69,14 +66,19 @@ public class SafeThoughtExecutor {
         }
 
         /**
-         * Executes the initial generation stage.
+         * New preferred generation entry point.
          *
-         * This method is deliberately model-aware at the fallback-policy level.
-         * For normal tasks, provider fallback can use cheap models. For serious
-         * code/software work, it keeps generation on strong models only. Otherwise,
-         * a transient GPT-5.4 failure can cause the first "valid" draft to come from
-         * a nano-class model, which is exactly how production-code requests become
-         * small toy examples.
+         * The AgentRunPlan is the source of truth for:
+         * - task type
+         * - difficulty
+         * - deep reasoning need
+         * - tool/web/file need
+         * - pipeline
+         * - answer token budget
+         *
+         * This method uses those decisions to choose normal fallback or protected
+         * fallback. It does not inspect the prompt text to guess whether the task is
+         * "serious code".
          */
         public ThoughtCallResult<StructuredResponse> generateDraft(
                         String runId,
@@ -88,34 +90,27 @@ public class SafeThoughtExecutor {
                         List<String> liveInjections,
                         List<Map<String, String>> history,
                         Double temperature,
-                        int attemptNumber) {
-                boolean seriousCodeContext = isGenerationCodeContext(
-                                domainContext,
-                                taskInstructions,
-                                dataset,
-                                liveInjections,
-                                history);
+                        int attemptNumber,
+                        AgentRunPlan plan) {
 
-                List<String> models = seriousCodeContext
+                boolean protectedQualityTask = shouldUseProtectedFallback(plan);
+
+                List<String> models = protectedQualityTask
                                 ? fallbackPolicy.strongGenerationFallbacks(preferredModel)
                                 : fallbackPolicy.generationFallbacks(preferredModel);
 
                 DraftSanityValidator.DraftSanityContext sanityContext = buildSanityContext(
                                 taskInstructions,
                                 "generation",
-                                seriousCodeContext,
-                                seriousCodeContext ? 10 : 0);
+                                plan);
 
-                logStage(
+                logPolicyDecision(
                                 runId,
                                 userId,
-                                AgentTraceEventType.WARNING,
                                 "generation",
-                                seriousCodeContext
-                                                ? "Using strong generation fallback policy for serious code/software task."
-                                                : "Using normal generation fallback policy.",
                                 preferredModel,
-                                0);
+                                protectedQualityTask,
+                                plan);
 
                 return executeWithFallback(
                                 runId,
@@ -125,8 +120,8 @@ public class SafeThoughtExecutor {
                                 attemptNumber,
                                 model -> worker.generateDraft(
                                                 model,
-                                                domainContext == null ? "" : domainContext,
-                                                taskInstructions == null ? "" : taskInstructions,
+                                                safe(domainContext),
+                                                safe(taskInstructions),
                                                 dataset == null ? Collections.emptyMap() : dataset,
                                                 liveInjections == null ? Collections.emptyList() : liveInjections,
                                                 history == null ? Collections.emptyList() : history,
@@ -140,11 +135,44 @@ public class SafeThoughtExecutor {
         }
 
         /**
-         * Attempts to repair a malfunctioning draft using targeted fixes.
+         * Backward-compatible overload.
          *
-         * For code repair, fallback must stay on strong models. Repair is not
-         * summarization. A cheap model can easily remove features, collapse files
-         * into a demo, invent placeholder functions, or damage syntax.
+         * Keep this so older callers still compile. It deliberately does not run any
+         * local keyword classifier. If the caller does not provide an AgentRunPlan,
+         * this executor uses the conservative normal fallback path.
+         */
+        public ThoughtCallResult<StructuredResponse> generateDraft(
+                        String runId,
+                        String userId,
+                        String preferredModel,
+                        String domainContext,
+                        String taskInstructions,
+                        Map<String, Object> dataset,
+                        List<String> liveInjections,
+                        List<Map<String, String>> history,
+                        Double temperature,
+                        int attemptNumber) {
+
+                return generateDraft(
+                                runId,
+                                userId,
+                                preferredModel,
+                                domainContext,
+                                taskInstructions,
+                                dataset,
+                                liveInjections,
+                                history,
+                                temperature,
+                                attemptNumber,
+                                null);
+        }
+
+        /**
+         * New preferred repair entry point.
+         *
+         * Repair quality is also controlled by AgentRunPlan. A hard medical answer,
+         * a research answer, or a major architecture answer should not drop into weak
+         * fallback simply because it is not code.
          */
         public ThoughtCallResult<StructuredResponse> repairDraft(
                         String runId,
@@ -155,15 +183,12 @@ public class SafeThoughtExecutor {
                         List<String> structuralFixes,
                         List<String> missingInstructions,
                         Map<String, Object> dataset,
-                        int attemptNumber) {
-                boolean seriousCodeContext = isRepairCodeContext(
-                                previousDraft,
-                                factualityFixes,
-                                structuralFixes,
-                                missingInstructions,
-                                dataset);
+                        int attemptNumber,
+                        AgentRunPlan plan) {
 
-                List<String> models = seriousCodeContext
+                boolean protectedQualityTask = shouldUseProtectedFallback(plan);
+
+                List<String> models = protectedQualityTask
                                 ? fallbackPolicy.strongRepairFallbacks(preferredModel)
                                 : fallbackPolicy.repairFallbacks(preferredModel);
 
@@ -177,19 +202,15 @@ public class SafeThoughtExecutor {
                 DraftSanityValidator.DraftSanityContext sanityContext = buildSanityContext(
                                 repairContextText,
                                 "repair",
-                                seriousCodeContext,
-                                seriousCodeContext ? 10 : 0);
+                                plan);
 
-                logStage(
+                logPolicyDecision(
                                 runId,
                                 userId,
-                                AgentTraceEventType.WARNING,
                                 "repair",
-                                seriousCodeContext
-                                                ? "Using strong repair fallback policy for serious code/software task."
-                                                : "Using normal repair fallback policy.",
                                 preferredModel,
-                                0);
+                                protectedQualityTask,
+                                plan);
 
                 return executeWithFallback(
                                 runId,
@@ -199,7 +220,7 @@ public class SafeThoughtExecutor {
                                 attemptNumber,
                                 model -> worker.repairDraft(
                                                 model,
-                                                previousDraft == null ? "" : previousDraft,
+                                                safe(previousDraft),
                                                 factualityFixes == null ? Collections.emptyList() : factualityFixes,
                                                 structuralFixes == null ? Collections.emptyList() : structuralFixes,
                                                 missingInstructions == null ? Collections.emptyList()
@@ -214,12 +235,84 @@ public class SafeThoughtExecutor {
         }
 
         /**
-         * Evaluates a draft against rigid system rules and dataset facts.
+         * Backward-compatible overload.
+         */
+        public ThoughtCallResult<StructuredResponse> repairDraft(
+                        String runId,
+                        String userId,
+                        String preferredModel,
+                        String previousDraft,
+                        List<String> factualityFixes,
+                        List<String> structuralFixes,
+                        List<String> missingInstructions,
+                        Map<String, Object> dataset,
+                        int attemptNumber) {
+
+                return repairDraft(
+                                runId,
+                                userId,
+                                preferredModel,
+                                previousDraft,
+                                factualityFixes,
+                                structuralFixes,
+                                missingInstructions,
+                                dataset,
+                                attemptNumber,
+                                null);
+        }
+
+        /**
+         * New preferred evaluation entry point.
          *
-         * For serious code/software tasks, critic fallback should also remain strong.
-         * A weak critic can produce fake middle scores, miss missing features, or let
-         * stub code pass because it only sees that the output is syntactically
-         * code-like.
+         * The critic fallback policy is also plan-driven. Hard research, medical,
+         * architecture, and tool-heavy answers need a strong critic as much as code
+         * does.
+         */
+        public ThoughtCallResult<EvaluationResult> evaluateDraft(
+                        String runId,
+                        String userId,
+                        String preferredModel,
+                        String draft,
+                        List<String> rigidRules,
+                        Map<String, Object> dataset,
+                        List<String> liveInjections,
+                        List<Map<String, String>> history,
+                        int attemptNumber,
+                        AgentRunPlan plan) {
+
+                boolean protectedQualityTask = shouldUseProtectedFallback(plan);
+
+                List<String> models = protectedQualityTask
+                                ? fallbackPolicy.strongCriticFallbacks(preferredModel)
+                                : fallbackPolicy.criticFallbacks(preferredModel);
+
+                logPolicyDecision(
+                                runId,
+                                userId,
+                                "evaluation",
+                                preferredModel,
+                                protectedQualityTask,
+                                plan);
+
+                return executeWithFallback(
+                                runId,
+                                userId,
+                                "evaluation",
+                                models,
+                                attemptNumber,
+                                model -> evaluator.evaluateDraft(
+                                                model,
+                                                model != null && model.toLowerCase(Locale.ROOT).startsWith("gemini"),
+                                                safe(draft),
+                                                rigidRules == null ? Collections.emptyList() : rigidRules,
+                                                dataset == null ? Collections.emptyMap() : dataset,
+                                                liveInjections == null ? Collections.emptyList() : liveInjections,
+                                                history == null ? Collections.emptyList() : history),
+                                (model, evaluation) -> validateEvaluation(model, attemptNumber, evaluation));
+        }
+
+        /**
+         * Backward-compatible overload.
          */
         public ThoughtCallResult<EvaluationResult> evaluateDraft(
                         String runId,
@@ -231,51 +324,28 @@ public class SafeThoughtExecutor {
                         List<String> liveInjections,
                         List<Map<String, String>> history,
                         int attemptNumber) {
-                boolean seriousCodeContext = isEvaluationCodeContext(
+
+                return evaluateDraft(
+                                runId,
+                                userId,
+                                preferredModel,
                                 draft,
                                 rigidRules,
                                 dataset,
                                 liveInjections,
-                                history);
-
-                List<String> models = seriousCodeContext
-                                ? fallbackPolicy.strongCriticFallbacks(preferredModel)
-                                : fallbackPolicy.criticFallbacks(preferredModel);
-
-                logStage(
-                                runId,
-                                userId,
-                                AgentTraceEventType.WARNING,
-                                "evaluation",
-                                seriousCodeContext
-                                                ? "Using strong critic fallback policy for serious code/software task."
-                                                : "Using normal critic fallback policy.",
-                                preferredModel,
-                                0);
-
-                return executeWithFallback(
-                                runId,
-                                userId,
-                                "evaluation",
-                                models,
+                                history,
                                 attemptNumber,
-                                model -> evaluator.evaluateDraft(
-                                                model,
-                                                model != null && model.toLowerCase(Locale.ROOT).startsWith("gemini"),
-                                                draft == null ? "" : draft,
-                                                rigidRules == null ? Collections.emptyList() : rigidRules,
-                                                dataset == null ? Collections.emptyMap() : dataset,
-                                                liveInjections == null ? Collections.emptyList() : liveInjections,
-                                                history == null ? Collections.emptyList() : history),
-                                (model, evaluation) -> validateEvaluation(model, attemptNumber, evaluation));
+                                null);
         }
 
         /**
-         * Core fault-tolerant execution loop used by all thought stages.
+         * Shared fallback execution loop.
          *
-         * The loop attempts each candidate model in order. Each output is passed to
-         * the stage-specific validator. A model is accepted only when the validator
-         * returns null. Otherwise, the failure is logged and the next model is tried.
+         * This method does not care why a model list was selected. Its only job is:
+         * - call the candidate model
+         * - validate the output
+         * - record a compact failure if needed
+         * - move to the next candidate
          */
         private <T> ThoughtCallResult<T> executeWithFallback(
                         String runId,
@@ -285,6 +355,7 @@ public class SafeThoughtExecutor {
                         int attemptNumber,
                         ModelOperation<T> operation,
                         ResultValidator<T> validator) {
+
                 List<ThoughtFailureRecord> failures = new ArrayList<>();
 
                 if (models == null || models.isEmpty()) {
@@ -316,27 +387,30 @@ public class SafeThoughtExecutor {
                                 T value = operation.execute(model);
 
                                 ThoughtFailureRecord validationFailure = validator.validate(model, value);
+
                                 if (validationFailure == null) {
                                         logStage(
                                                         runId,
                                                         userId,
                                                         AgentTraceEventType.WARNING,
                                                         stage,
-                                                        "Thought stage recovered/succeeded using model: "
-                                                                        + safeModel(model),
+                                                        "Thought stage succeeded using model: " + safeModel(model),
                                                         model,
                                                         System.currentTimeMillis() - startedAt);
+
                                         return ThoughtCallResult.success(value, model, failures);
                                 }
 
                                 failures.add(validationFailure);
                                 logFailure(runId, userId, stage, validationFailure);
+
                         } catch (Exception exception) {
                                 ThoughtFailureRecord failure = ThoughtFailureRecord.fromException(
                                                 exception,
                                                 stage,
                                                 model,
                                                 attemptNumber);
+
                                 failures.add(failure);
                                 logFailure(runId, userId, stage, failure);
                         }
@@ -346,11 +420,12 @@ public class SafeThoughtExecutor {
         }
 
         /**
-         * Validates a generated/repaired StructuredResponse.
+         * Validates a generated or repaired StructuredResponse.
          *
-         * The important correction is that DraftSanityValidator now receives a real
-         * context instead of empty placeholders. This allows the validator to judge
-         * code output against the actual seriousness of the request.
+         * DraftSanityValidator still receives a code-sanity boolean because that
+         * validator appears to have code-specific checks. The important change is:
+         * the boolean now comes from TaskClassification.taskType, not from another
+         * prompt keyword detector hidden inside this executor.
          */
         private ThoughtFailureRecord validateStructuredResponse(
                         String stage,
@@ -358,6 +433,7 @@ public class SafeThoughtExecutor {
                         int attemptNumber,
                         StructuredResponse response,
                         DraftSanityValidator.DraftSanityContext sanityContext) {
+
                 if (response == null) {
                         return ThoughtFailureRecord.of(
                                         stage.equals("repair") ? ThoughtFailureType.REPAIR_FAILED
@@ -390,9 +466,10 @@ public class SafeThoughtExecutor {
                                         true);
                 }
 
-                if (combined.contains("empty json returned") ||
-                                combined.contains("generated an empty response") ||
-                                combined.contains("empty response payload")) {
+                if (combined.contains("empty json returned")
+                                || combined.contains("generated an empty response")
+                                || combined.contains("empty response payload")) {
+
                         return ThoughtFailureRecord.of(
                                         ThoughtFailureType.EMPTY_SUMMARY,
                                         stage,
@@ -404,9 +481,10 @@ public class SafeThoughtExecutor {
                                         true);
                 }
 
-                if (combined.contains("safety filters") ||
-                                combined.contains("safety filter") ||
-                                combined.contains("blocked this prompt")) {
+                if (combined.contains("safety filters")
+                                || combined.contains("safety filter")
+                                || combined.contains("blocked this prompt")) {
+
                         return ThoughtFailureRecord.of(
                                         ThoughtFailureType.MODEL_SAFETY_BLOCKED,
                                         stage,
@@ -442,13 +520,14 @@ public class SafeThoughtExecutor {
         /**
          * Validates critic output.
          *
-         * Empty all-zero critic output is treated as malformed unless the critic
-         * provides useful rationale or repair instructions.
+         * A critic response with all zero scores and no explanation/fixes is almost
+         * always a malformed or empty structured response, not a legitimate critique.
          */
         private ThoughtFailureRecord validateEvaluation(
                         String model,
                         int attemptNumber,
                         EvaluationResult evaluation) {
+
                 if (evaluation == null) {
                         return ThoughtFailureRecord.of(
                                         ThoughtFailureType.CRITIC_MALFORMED,
@@ -461,20 +540,20 @@ public class SafeThoughtExecutor {
                                         true);
                 }
 
-                boolean allScoresZero = evaluation.getFactualityScore() == 0 &&
-                                evaluation.getStructureScore() == 0 &&
-                                evaluation.getStyleScore() == 0 &&
-                                evaluation.getInstructionAdherenceScore() == 0;
+                boolean allScoresZero = evaluation.getFactualityScore() == 0
+                                && evaluation.getStructureScore() == 0
+                                && evaluation.getStyleScore() == 0
+                                && evaluation.getInstructionAdherenceScore() == 0;
 
-                boolean hasRationale = evaluation.getGeneralRationale() != null &&
-                                !evaluation.getGeneralRationale().isBlank();
+                boolean hasRationale = evaluation.getGeneralRationale() != null
+                                && !evaluation.getGeneralRationale().isBlank();
 
-                boolean hasFixes = !evaluation.getFactualityFixes().isEmpty() ||
-                                !evaluation.getStructureFixes().isEmpty() ||
-                                !evaluation.getStyleFixes().isEmpty() ||
-                                !evaluation.getMissingInstructions().isEmpty() ||
-                                !evaluation.getRepairInstructions().isEmpty() ||
-                                !evaluation.getIssues().isEmpty();
+                boolean hasFixes = hasItems(evaluation.getFactualityFixes())
+                                || hasItems(evaluation.getStructureFixes())
+                                || hasItems(evaluation.getStyleFixes())
+                                || hasItems(evaluation.getMissingInstructions())
+                                || hasItems(evaluation.getRepairInstructions())
+                                || hasItems(evaluation.getIssues());
 
                 if (allScoresZero && !hasRationale && !hasFixes) {
                         return ThoughtFailureRecord.of(
@@ -492,98 +571,174 @@ public class SafeThoughtExecutor {
         }
 
         /**
-         * Builds the sanity context for deterministic draft validation.
+         * Decides whether this stage should use strong/protected fallback.
          *
-         * The existing DraftSanityContext accepts textual task fields, a serious-code
-         * boolean, and a complexity integer. We feed it the strongest context this
-         * executor has available instead of empty placeholders.
+         * This is not classification. It only translates the already-created
+         * AgentRunPlan into fallback strength.
+         *
+         * Protected fallback is used for any high-attention task, not only code:
+         * - HARD tasks
+         * - deep reasoning tasks
+         * - tool/web/file tasks
+         * - large token budget tasks
+         * - architecture/research/medical/code/tool-required task types
+         * - PLAN_THINK_CRITIC_REPAIR and TOOL_AGENT pipelines
          */
+        private boolean shouldUseProtectedFallback(AgentRunPlan plan) {
+                if (plan == null) {
+                        return false;
+                }
+
+                if (plan.getMaxAnswerTokens() >= 6000) {
+                        return true;
+                }
+
+                TaskClassifier.TaskClassification classification = plan.getClassification();
+
+                if (classification == null) {
+                        return false;
+                }
+
+                if (classification.difficulty == TaskClassifier.TaskDifficulty.HARD) {
+                        return true;
+                }
+
+                if (classification.needsDeepReasoning
+                                || classification.needsTools
+                                || classification.needsWeb
+                                || classification.needsFileAccess) {
+                        return true;
+                }
+
+                if (classification.recommendedPipeline == TaskClassifier.RecommendedPipeline.PLAN_THINK_CRITIC_REPAIR
+                                || classification.recommendedPipeline == TaskClassifier.RecommendedPipeline.TOOL_AGENT) {
+                        return true;
+                }
+
+                TaskClassifier.TaskType taskType = classification.taskType;
+
+                return taskType == TaskClassifier.TaskType.CODE_GENERATION
+                                || taskType == TaskClassifier.TaskType.CODE_DEBUGGING
+                                || taskType == TaskClassifier.TaskType.ARCHITECTURE_DESIGN
+                                || taskType == TaskClassifier.TaskType.RESEARCH
+                                || taskType == TaskClassifier.TaskType.MEDICAL
+                                || taskType == TaskClassifier.TaskType.TOOL_REQUIRED;
+        }
+
+        /**
+         * Enables code-specific deterministic sanity checks only when the classifier
+         * said the task is code generation or code debugging.
+         *
+         * Do not infer this from raw text here. That was the old bug.
+         */
+        private boolean shouldEnableCodeSanity(AgentRunPlan plan) {
+                if (plan == null || plan.getClassification() == null) {
+                        return false;
+                }
+
+                TaskClassifier.TaskType taskType = plan.getClassification().taskType;
+
+                return taskType == TaskClassifier.TaskType.CODE_GENERATION
+                                || taskType == TaskClassifier.TaskType.CODE_DEBUGGING;
+        }
+
+        /**
+         * Builds a complexity score for DraftSanityValidator from the existing plan.
+         *
+         * This is not a second classifier. It is just a compact numeric translation
+         * of decisions already made by TaskClassifier and AgentRunPlan.
+         */
+        private int expectedComplexityFromPlan(AgentRunPlan plan) {
+                if (plan == null) {
+                        return 0;
+                }
+
+                int complexity = 3;
+
+                TaskClassifier.TaskClassification classification = plan.getClassification();
+
+                if (classification != null) {
+                        if (classification.difficulty == TaskClassifier.TaskDifficulty.EASY) {
+                                complexity = 2;
+                        } else if (classification.difficulty == TaskClassifier.TaskDifficulty.MEDIUM) {
+                                complexity = 5;
+                        } else if (classification.difficulty == TaskClassifier.TaskDifficulty.HARD) {
+                                complexity = 8;
+                        }
+
+                        if (classification.needsDeepReasoning) {
+                                complexity = Math.max(complexity, 7);
+                        }
+
+                        if (classification.needsTools || classification.needsWeb || classification.needsFileAccess) {
+                                complexity = Math.max(complexity, 7);
+                        }
+
+                        if (classification.recommendedPipeline == TaskClassifier.RecommendedPipeline.PLAN_THINK_CRITIC_REPAIR
+                                        || classification.recommendedPipeline == TaskClassifier.RecommendedPipeline.TOOL_AGENT) {
+                                complexity = Math.max(complexity, 8);
+                        }
+                }
+
+                if (plan.getMaxAnswerTokens() >= 12000) {
+                        complexity = Math.max(complexity, 10);
+                } else if (plan.getMaxAnswerTokens() >= 8000) {
+                        complexity = Math.max(complexity, 9);
+                } else if (plan.getMaxAnswerTokens() >= 6000) {
+                        complexity = Math.max(complexity, 8);
+                }
+
+                return clamp(complexity, 0, 10);
+        }
+
         private DraftSanityValidator.DraftSanityContext buildSanityContext(
                         String taskText,
                         String stage,
-                        boolean seriousCodeContext,
-                        int expectedComplexity) {
-                String query = taskText == null ? "" : taskText;
-                String taskKind = stage == null ? "" : stage;
+                        AgentRunPlan plan) {
+
+                String query = safe(taskText);
+                String taskKind = buildTaskKind(stage, plan);
+                boolean codeSanity = shouldEnableCodeSanity(plan);
+                int expectedComplexity = expectedComplexityFromPlan(plan);
 
                 return DraftSanityValidator.DraftSanityContext.of(
                                 query,
                                 taskKind,
-                                seriousCodeContext,
-                                Math.max(0, expectedComplexity));
+                                codeSanity,
+                                expectedComplexity);
         }
 
-        /**
-         * Detects serious code/software generation context.
-         *
-         * This intentionally combines domain context, task instructions, dataset,
-         * live injections, and history because Agent may place the most important
-         * routing details in different fields depending on the pathway.
-         */
-        private boolean isGenerationCodeContext(
-                        String domainContext,
-                        String taskInstructions,
-                        Map<String, Object> dataset,
-                        List<String> liveInjections,
-                        List<Map<String, String>> history) {
-                String combined = combineText(
-                                domainContext,
-                                taskInstructions,
-                                mapToText(dataset),
-                                listToText(liveInjections),
-                                historyToText(history));
+        private String buildTaskKind(String stage, AgentRunPlan plan) {
+                String safeStage = safe(stage);
 
-                return isSeriousSoftwareText(combined);
+                if (plan == null || plan.getClassification() == null) {
+                        return safeStage;
+                }
+
+                TaskClassifier.TaskClassification classification = plan.getClassification();
+
+                String taskType = classification.taskType == null
+                                ? "UNKNOWN"
+                                : classification.taskType.name();
+
+                String difficulty = classification.difficulty == null
+                                ? "UNKNOWN"
+                                : classification.difficulty.name();
+
+                String pipeline = classification.recommendedPipeline == null
+                                ? "UNKNOWN"
+                                : classification.recommendedPipeline.name();
+
+                return safeStage + "/" + taskType + "/" + difficulty + "/" + pipeline;
         }
 
-        /**
-         * Detects serious code/software repair context from the previous draft and
-         * critic instructions.
-         */
-        private boolean isRepairCodeContext(
-                        String previousDraft,
-                        List<String> factualityFixes,
-                        List<String> structuralFixes,
-                        List<String> missingInstructions,
-                        Map<String, Object> dataset) {
-                String combined = combineText(
-                                previousDraft,
-                                listToText(factualityFixes),
-                                listToText(structuralFixes),
-                                listToText(missingInstructions),
-                                mapToText(dataset));
-
-                return isSeriousSoftwareText(combined);
-        }
-
-        /**
-         * Detects serious code/software evaluation context.
-         */
-        private boolean isEvaluationCodeContext(
-                        String draft,
-                        List<String> rigidRules,
-                        Map<String, Object> dataset,
-                        List<String> liveInjections,
-                        List<Map<String, String>> history) {
-                String combined = combineText(
-                                draft,
-                                listToText(rigidRules),
-                                mapToText(dataset),
-                                listToText(liveInjections),
-                                historyToText(history));
-
-                return isSeriousSoftwareText(combined);
-        }
-
-        /**
-         * Builds text for repair-stage sanity context.
-         */
         private String buildRepairContextText(
                         String previousDraft,
                         List<String> factualityFixes,
                         List<String> structuralFixes,
                         List<String> missingInstructions,
                         Map<String, Object> dataset) {
+
                 return combineText(
                                 previousDraft,
                                 listToText(factualityFixes),
@@ -592,107 +747,117 @@ public class SafeThoughtExecutor {
                                 mapToText(dataset));
         }
 
-        /**
-         * Broad detector for serious software/code contexts.
-         *
-         * This is not the primary task classifier. The model classifier/router has
-         * already done that earlier. This detector is a safety guard used only to
-         * choose strong fallback policy and meaningful sanity validation context.
-         */
-        private boolean isSeriousSoftwareText(String text) {
-                if (text == null || text.isBlank()) {
-                        return false;
+        private void logPolicyDecision(
+                        String runId,
+                        String userId,
+                        String stage,
+                        String preferredModel,
+                        boolean protectedQualityTask,
+                        AgentRunPlan plan) {
+
+                if (traceLogger == null) {
+                        return;
                 }
 
-                String s = text.toLowerCase(Locale.ROOT);
+                Map<String, Object> data = planDebugData(plan);
+                data.put("model", safeModel(preferredModel));
+                data.put("protectedQualityTask", protectedQualityTask);
 
-                boolean softwareSignal = s.contains("code") ||
-                                s.contains("coding") ||
-                                s.contains("program") ||
-                                s.contains("script") ||
-                                s.contains("software") ||
-                                s.contains("html") ||
-                                s.contains("css") ||
-                                s.contains("javascript") ||
-                                s.contains("typescript") ||
-                                s.contains("java") ||
-                                s.contains("kotlin") ||
-                                s.contains("python") ||
-                                s.contains("c++") ||
-                                s.contains("cpp") ||
-                                s.contains("c#") ||
-                                s.contains("csharp") ||
-                                s.contains("go ") ||
-                                s.contains("golang") ||
-                                s.contains("rust") ||
-                                s.contains("swift") ||
-                                s.contains("php") ||
-                                s.contains("ruby") ||
-                                s.contains("sql") ||
-                                s.contains("json") ||
-                                s.contains("xml") ||
-                                s.contains("yaml") ||
-                                s.contains("gradle") ||
-                                s.contains("maven") ||
-                                s.contains("spring") ||
-                                s.contains("android") ||
-                                s.contains("compose") ||
-                                s.contains("react") ||
-                                s.contains("node") ||
-                                s.contains("backend") ||
-                                s.contains("frontend") ||
-                                s.contains("api") ||
-                                s.contains("server") ||
-                                s.contains("editor") ||
-                                s.contains("ide") ||
-                                s.contains("debug") ||
-                                s.contains("compile") ||
-                                s.contains("runtime") ||
-                                s.contains("function ") ||
-                                s.contains("class ") ||
-                                s.contains("<html") ||
-                                s.contains("<script") ||
-                                s.contains("<style");
-
-                boolean seriousnessSignal = s.contains("complete") ||
-                                s.contains("fully") ||
-                                s.contains("professional") ||
-                                s.contains("production") ||
-                                s.contains("detailed") ||
-                                s.contains("advanced") ||
-                                s.contains("visual studio") ||
-                                s.contains("vs code") ||
-                                s.contains("full file") ||
-                                s.contains("entire file") ||
-                                s.contains("working") ||
-                                s.contains("runnable") ||
-                                s.contains("no stub") ||
-                                s.contains("no placeholder") ||
-                                s.contains("heavy") ||
-                                s.contains("all features") ||
-                                s.contains("connected");
-
-                boolean answerAlreadyLooksLikeCode = s.contains("```") ||
-                                s.contains("<!doctype html") ||
-                                s.contains("public class") ||
-                                s.contains("import ") ||
-                                s.contains("package ") ||
-                                s.contains("const ") ||
-                                s.contains("let ") ||
-                                s.contains("var ") ||
-                                s.contains("document.getelementbyid") ||
-                                s.contains("addeventlistener") ||
-                                s.contains("localstorage") ||
-                                s.contains("monaco.editor");
-
-                return (softwareSignal && seriousnessSignal) || answerAlreadyLooksLikeCode;
+                traceLogger.stage(
+                                runId,
+                                userId,
+                                AgentTraceEventType.WARNING,
+                                stage,
+                                protectedQualityTask
+                                                ? "Using protected fallback policy from AgentRunPlan."
+                                                : "Using normal fallback policy from AgentRunPlan.",
+                                data);
         }
 
-        /**
-         * Combines nullable text chunks into one searchable string.
-         */
+        private Map<String, Object> planDebugData(AgentRunPlan plan) {
+                Map<String, Object> data = new LinkedHashMap<>();
+
+                if (plan == null) {
+                        data.put("planPresent", false);
+                        return data;
+                }
+
+                data.put("planPresent", true);
+                data.put("maxAttempts", plan.getMaxAttempts());
+                data.put("successThreshold", plan.getSuccessThreshold());
+                data.put("maxAnswerTokens", plan.getMaxAnswerTokens());
+                data.put("maxWallClockMs",
+                                plan.getMaxWallClockTime() == null ? 0 : plan.getMaxWallClockTime().toMillis());
+
+                TaskClassifier.TaskClassification classification = plan.getClassification();
+
+                if (classification != null) {
+                        data.put("taskType", classification.taskType == null ? "" : classification.taskType.name());
+                        data.put("difficulty",
+                                        classification.difficulty == null ? "" : classification.difficulty.name());
+                        data.put("pipeline", classification.recommendedPipeline == null ? ""
+                                        : classification.recommendedPipeline.name());
+                        data.put("needsDeepReasoning", classification.needsDeepReasoning);
+                        data.put("needsTools", classification.needsTools);
+                        data.put("needsWeb", classification.needsWeb);
+                        data.put("needsFileAccess", classification.needsFileAccess);
+                        data.put("providerUsed", safe(classification.providerUsed));
+                }
+
+                return data;
+        }
+
+        private void logFailure(
+                        String runId,
+                        String userId,
+                        String stage,
+                        ThoughtFailureRecord failure) {
+
+                if (traceLogger == null || failure == null) {
+                        return;
+                }
+
+                traceLogger.warning(
+                                runId,
+                                userId,
+                                stage,
+                                "Thought failure: " + failure.getType(),
+                                Map.of(
+                                                "type", failure.getType().name(),
+                                                "model", safe(failure.getModel()),
+                                                "attempt", failure.getAttemptNumber(),
+                                                "message", safe(failure.getMessage()),
+                                                "fixHint", safe(failure.getFixHint()),
+                                                "severity", failure.getSeverity(),
+                                                "recoverable", failure.isRecoverable()));
+        }
+
+        private void logStage(
+                        String runId,
+                        String userId,
+                        AgentTraceEventType type,
+                        String stage,
+                        String message,
+                        String model,
+                        long durationMs) {
+
+                if (traceLogger == null) {
+                        return;
+                }
+
+                traceLogger.stage(
+                                runId,
+                                userId,
+                                type,
+                                stage,
+                                message,
+                                Map.of(
+                                                "model", safe(model),
+                                                "durationMs", durationMs));
+        }
+
         private String combineText(String... parts) {
-                if (parts == null) {
+                if (parts == null || parts.length == 0) {
                         return "";
                 }
 
@@ -700,7 +865,7 @@ public class SafeThoughtExecutor {
 
                 for (String part : parts) {
                         if (part != null && !part.isBlank()) {
-                                if (!builder.isEmpty()) {
+                                if (builder.length() > 0) {
                                         builder.append('\n');
                                 }
                                 builder.append(part);
@@ -710,9 +875,6 @@ public class SafeThoughtExecutor {
                 return builder.toString();
         }
 
-        /**
-         * Converts a nullable list to text.
-         */
         private String listToText(List<String> lines) {
                 if (lines == null || lines.isEmpty()) {
                         return "";
@@ -722,7 +884,7 @@ public class SafeThoughtExecutor {
 
                 for (String line : lines) {
                         if (line != null && !line.isBlank()) {
-                                if (!builder.isEmpty()) {
+                                if (builder.length() > 0) {
                                         builder.append('\n');
                                 }
                                 builder.append(line);
@@ -732,38 +894,6 @@ public class SafeThoughtExecutor {
                 return builder.toString();
         }
 
-        /**
-         * Converts history messages to compact text.
-         */
-        private String historyToText(List<Map<String, String>> history) {
-                if (history == null || history.isEmpty()) {
-                        return "";
-                }
-
-                StringBuilder builder = new StringBuilder();
-
-                for (Map<String, String> item : history) {
-                        if (item == null || item.isEmpty()) {
-                                continue;
-                        }
-
-                        String role = safe(item.get("role"));
-                        String content = safe(item.get("content"));
-
-                        if (!content.isBlank()) {
-                                if (!builder.isEmpty()) {
-                                        builder.append('\n');
-                                }
-                                builder.append(role).append(": ").append(content);
-                        }
-                }
-
-                return builder.toString();
-        }
-
-        /**
-         * Converts a dataset map into compact searchable text.
-         */
         private String mapToText(Map<String, Object> dataset) {
                 if (dataset == null || dataset.isEmpty()) {
                         return "";
@@ -781,7 +911,7 @@ public class SafeThoughtExecutor {
                         String value = valueObject == null ? "" : String.valueOf(valueObject);
 
                         if (!key.isBlank() || !value.isBlank()) {
-                                if (!builder.isEmpty()) {
+                                if (builder.length() > 0) {
                                         builder.append('\n');
                                 }
                                 builder.append(key).append(": ").append(value);
@@ -791,65 +921,18 @@ public class SafeThoughtExecutor {
                 return builder.toString();
         }
 
-        /**
-         * Logs a failed thought stage.
-         */
-        private void logFailure(String runId, String userId, String stage, ThoughtFailureRecord failure) {
-                if (traceLogger == null || failure == null) {
-                        return;
-                }
-
-                traceLogger.warning(
-                                runId,
-                                userId,
-                                stage,
-                                "Thought failure: " + failure.getType(),
-                                Map.of(
-                                                "type", failure.getType().name(),
-                                                "model", failure.getModel(),
-                                                "attempt", failure.getAttemptNumber(),
-                                                "message", failure.getMessage(),
-                                                "fixHint", failure.getFixHint(),
-                                                "severity", failure.getSeverity(),
-                                                "recoverable", failure.isRecoverable()));
+        private boolean hasItems(List<?> values) {
+                return values != null && !values.isEmpty();
         }
 
-        /**
-         * Logs non-failure stage progress.
-         */
-        private void logStage(
-                        String runId,
-                        String userId,
-                        AgentTraceEventType type,
-                        String stage,
-                        String message,
-                        String model,
-                        long durationMs) {
-                if (traceLogger == null) {
-                        return;
-                }
-
-                traceLogger.stage(
-                                runId,
-                                userId,
-                                type,
-                                stage,
-                                message,
-                                Map.of(
-                                                "model", model == null ? "" : model,
-                                                "durationMs", durationMs));
+        private int clamp(int value, int min, int max) {
+                return Math.max(min, Math.min(max, value));
         }
 
-        /**
-         * Null-safe model display.
-         */
         private String safeModel(String model) {
                 return model == null || model.isBlank() ? "unknown" : model;
         }
 
-        /**
-         * Null-safe string.
-         */
         private String safe(String value) {
                 return value == null ? "" : value;
         }

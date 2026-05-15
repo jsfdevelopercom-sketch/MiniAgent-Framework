@@ -440,7 +440,7 @@ public class OpenAiHttpClient {
         }
 
         String m = normalizeModelName(model);
-        String effort = m.contains("pro") ? "high" : "medium";
+        String effort = m.contains("pro") ? "medium" : "low";
 
         request.put("reasoning", Map.of("effort", effort));
     }
@@ -464,7 +464,7 @@ public class OpenAiHttpClient {
         }
 
         String m = normalizeModelName(model);
-        String effort = m.contains("pro") ? "high" : "medium";
+        String effort = m.contains("pro") ? "medium" : "low";
 
         request.put("reasoning_effort", effort);
     }
@@ -917,14 +917,14 @@ public class OpenAiHttpClient {
 
     private Duration resolveRequestTimeout(String activeModel) {
         if (shouldUseResponsesApi(activeModel)) {
-            return Duration.ofMinutes(7);
+            return Duration.ofMinutes(2);
         }
 
         if (isReasoningCapableModel(activeModel)) {
-            return Duration.ofMinutes(7);
+            return Duration.ofMinutes(2);
         }
 
-        return Duration.ofMinutes(3);
+        return Duration.ofSeconds(30);
     }
 
     /**

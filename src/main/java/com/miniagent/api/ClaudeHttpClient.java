@@ -49,7 +49,7 @@ public class ClaudeHttpClient {
             boolean highModel = com.miniagent.core.ModelConstants.isHighModel(model);
             Map<String, Object> request = new HashMap<>();
             request.put("model", model);
-            request.put("max_tokens", 4096);
+            request.put("max_tokens", 16000);
             request.put("system", systemPrompt);
             if (temperature != null)
                 request.put("temperature", temperature);
@@ -166,7 +166,7 @@ public class ClaudeHttpClient {
             boolean highModel = com.miniagent.core.ModelConstants.isHighModel(model);
             Map<String, Object> request = new HashMap<>();
             request.put("model", model);
-            request.put("max_tokens", 4096);
+            request.put("max_tokens", 16000);
             request.put("system", systemPrompt);
             if (temperature != null)
                 request.put("temperature", temperature);

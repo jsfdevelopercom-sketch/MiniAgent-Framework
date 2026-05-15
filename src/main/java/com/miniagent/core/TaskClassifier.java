@@ -1,6 +1,7 @@
 package com.miniagent.core;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.miniagent.api.ClaudeHttpClient;
 import com.miniagent.api.GeminiHttpClient;
@@ -14,20 +15,62 @@ import java.util.Objects;
 /**
  * TaskClassifier is the first routing brain of MiniAgent.
  *
- * It does NOT solve the user's task.
- * It only classifies the task and recommends which MiniAgent pipeline should
- * handle it.
+ * This class must stay small, cheap, and predictable.
+ * It does not solve the user's task.
+ * It does not decide retry/repair attempt counts.
  *
- * Important design rule:
- * - Use a cheap, fast model here.
- * - Do not use deep thinking models for classification.
- * - Do not pass whole conversation history here.
+ * It DOES decide the answer token budget.
+ *
+ * That token-budget authority is deliberately bounded by deterministic Java
+ * rules.
+ * The model is allowed to say:
+ *
+ * "This looks like a large code-generation task. Give it 14000 answer tokens."
+ *
+ * But the model is not allowed to say:
+ *
+ * "Give this tiny one-line answer 50000 tokens."
+ *
+ * Therefore:
+ * - the classifier model recommends max_answer_tokens
+ * - Java validates and clamps that recommendation
+ * - obvious large-code tasks are upgraded deterministically if the classifier
+ * underestimates them
+ *
+ * Very important:
+ * Attempts are runtime policy, not classifier policy.
+ * If the system allows the classifier model to decide attempts, then one vague
+ * JSON field can suddenly make
+ * Agent-Nero spend several minutes doing repeated thinker/critic/repair loops.
+ * That is exactly the wrong place to control commercial UX.
+ *
+ * The only reason maxAttempts still exists in TaskClassification is backward
+ * compatibility with older code that may still read classification.maxAttempts.
+ * It is deliberately set to 0 by this class.
  */
 public class TaskClassifier {
 
     private static final String DEFAULT_OPENAI_CLASSIFIER_MODEL = ModelConstants.GPT_5_NANO;
     private static final String DEFAULT_GEMINI_CLASSIFIER_MODEL = ModelConstants.GEMINI_3_1_FLASH_LITE_PREVIEW;
     private static final String DEFAULT_CLAUDE_CLASSIFIER_MODEL = ModelConstants.CLAUDE_HAIKU_4_5;
+
+    private static final int MAX_CLASSIFIER_INPUT_CHARS = 8000;
+    private static final int MAX_REASON_CHARS = 240;
+
+    /*
+     * Global hard boundary for answer-token budget.
+     *
+     * These are not reasoning tokens.
+     * These are not total API tokens.
+     * This is the downstream answer budget that MiniAgent should try to preserve.
+     *
+     * If another class later clamps this value lower, this classifier's decision
+     * will be lost.
+     * In particular, check AgentRunPlan if you expect values above 12000 to
+     * survive.
+     */
+    private static final int MIN_ANSWER_TOKENS = 500;
+    private static final int MAX_ANSWER_TOKENS = 16000;
 
     private final OpenAiHttpClient openAiClient;
     private final GeminiHttpClient geminiClient;
@@ -38,6 +81,13 @@ public class TaskClassifier {
     private final String geminiClassifierModel;
     private final String claudeClassifierModel;
 
+    /**
+     * Normal constructor used by production wiring.
+     *
+     * It chooses the default cheap classifier models from ModelConstants.
+     * The classifier should not use expensive deep models because this call happens
+     * before the real task starts.
+     */
     public TaskClassifier(
             OpenAiHttpClient openAiClient,
             GeminiHttpClient geminiClient,
@@ -53,6 +103,14 @@ public class TaskClassifier {
                 DEFAULT_CLAUDE_CLASSIFIER_MODEL);
     }
 
+    /**
+     * Constructor used when the server wants to override classifier models.
+     *
+     * This is useful for testing, Railway configuration, or emergency fallback
+     * changes without touching the main classifier code.
+     *
+     * Null or blank model names are replaced with safe defaults.
+     */
     public TaskClassifier(
             OpenAiHttpClient openAiClient,
             GeminiHttpClient geminiClient,
@@ -72,19 +130,29 @@ public class TaskClassifier {
     }
 
     /**
-     * Classifies the task using AUTO provider selection.
+     * Classifies a task using automatic provider selection.
      *
      * AUTO means:
-     * 1. Prefer OpenAI if configured.
-     * 2. Then Gemini if configured.
-     * 3. Then Claude if configured.
+     * 1. Try OpenAI first if configured.
+     * 2. Then Gemini if OpenAI is unavailable or fails.
+     * 3. Then Claude if both earlier providers fail.
+     *
+     * The provider fallback is intentionally local to classification.
+     * A classifier failure should not kill the whole agent run when deterministic
+     * fallback can still create a usable plan.
      */
     public TaskClassification classify(String userTask) {
         return classify(userTask, ClassifierProvider.AUTO);
     }
 
     /**
-     * Classifies the task using requested provider.
+     * Classifies a task using the requested provider first.
+     *
+     * If the requested provider fails, this method still tries the remaining
+     * providers.
+     *
+     * That behavior is intentional. Classification is a routing step, so it should
+     * be resilient rather than fragile.
      */
     public TaskClassification classify(String userTask, ClassifierProvider preferredProvider) {
         String normalizedTask = validateAndNormalizeTask(userTask);
@@ -96,8 +164,7 @@ public class TaskClassifier {
         for (ClassifierProvider currentProvider : providerOrder) {
             try {
                 String rawJson = invokeProvider(currentProvider, normalizedTask);
-                TaskClassification classification = parseAndNormalize(rawJson, currentProvider, normalizedTask);
-                return classification;
+                return parseAndNormalize(rawJson, currentProvider, normalizedTask);
             } catch (Exception ex) {
                 failures.add(currentProvider + ": " + ex.getMessage());
             }
@@ -106,6 +173,17 @@ public class TaskClassifier {
         return fallbackClassification(normalizedTask, failures);
     }
 
+    /**
+     * Calls the selected provider's structured-output endpoint.
+     *
+     * The classifier prompt already asks for JSON only.
+     *
+     * Provider-specific HTTP behavior, response_format handling, Responses API
+     * handling, and temperature handling must remain inside the individual HTTP
+     * client classes.
+     *
+     * This class should not know those transport details.
+     */
     private String invokeProvider(ClassifierProvider provider, String userTask) {
         String systemPrompt = buildSystemPrompt();
         String userPrompt = buildUserPrompt(userTask);
@@ -142,6 +220,24 @@ public class TaskClassifier {
         };
     }
 
+    /**
+     * Builds the system prompt for the classifier model.
+     *
+     * The important change:
+     * TaskClassifier now owns max_answer_tokens.
+     *
+     * The classifier model is explicitly told the allowed ranges.
+     * Then Java hard-validates the model's recommendation after parsing.
+     *
+     * What is deliberately still absent:
+     * - no real max_attempts authority
+     * - no retry policy authority
+     * - no repair loop authority
+     *
+     * Token budget is a task-size estimate.
+     * Attempt count is a runtime/commercial UX policy.
+     * Keep those separate.
+     */
     private String buildSystemPrompt() {
         return """
                 You are TaskClassifier, a strict routing component inside a Java AI agent system.
@@ -149,16 +245,17 @@ public class TaskClassifier {
                 Your job:
                 - Classify the user's task.
                 - Recommend the cheapest safe MiniAgent pipeline.
+                - Decide max_answer_tokens for the final answer.
                 - Return only valid JSON.
                 - Do not solve the task.
                 - Do not explain the classification outside JSON.
 
-                Important rules:
+                Important routing rules:
                 - Prefer EASY unless the task clearly requires multiple steps.
                 - Set needs_deep_reasoning=true only for complex code, architecture, debugging, medical/legal/financial reasoning, math, research, or multi-step planning.
                 - Set needs_tools=true only if external action is needed: reading files, running code, web search, browser control, API calls, database access, calendar/email, or live state.
                 - Set needs_web=true only if current/latest/niche information is required.
-                - Set needs_file_access=true only if user asks to inspect/upload/read/modify files or project code.
+                - Set needs_file_access=true only if the user asks to inspect, upload, read, compare, or modify files/project code.
                 - Set needs_user_clarification=true only if the task cannot be safely attempted from the provided input.
                 - Set recommended_pipeline=DIRECT_ANSWER for simple tasks.
                 - Set recommended_pipeline=THINK_CRITIC_REPAIR for medium quality-sensitive tasks.
@@ -166,6 +263,27 @@ public class TaskClassifier {
                 - Set recommended_pipeline=TOOL_AGENT for tasks requiring tools or external observations.
                 - Set recommended_pipeline=ASK_USER_CLARIFICATION if essential information is missing.
                 - Set recommended_pipeline=REFUSE only for unsafe or disallowed tasks.
+                - Always set max_attempts=0. This field exists only for backward compatibility. Do not use it to control retries.
+
+                max_answer_tokens rules:
+                - max_answer_tokens is the estimated final answer budget.
+                - It must be an integer.
+                - It must never be below 500.
+                - It must never be above 16000.
+                - For short EASY non-code tasks: use 500 to 1800.
+                - For MEDIUM non-code tasks: use 1800 to 5000.
+                - For HARD non-code tasks: use 4000 to 10000.
+                - For EASY code tasks: use 2000 to 5000.
+                - For MEDIUM code/debugging tasks: use 5000 to 10000.
+                - For HARD complete code/debugging tasks: use 10000 to 16000.
+                - For very large complete app/frontend/backend generation: use 14000 to 16000.
+                - For research or architecture design: use 3000 to 14000 depending on difficulty.
+                - For simple summaries or rewrites: use 800 to 3000.
+                - Do not choose tiny token budgets for complete-code requests.
+                - Do not choose huge token budgets for simple Q&A.
+
+                Do not include retry counts, attempt counts, loop counts, or execution-time policy.
+                Those are controlled by the runtime planner, not by the classifier.
 
                 Output JSON schema:
                 {
@@ -177,7 +295,7 @@ public class TaskClassifier {
                   "needs_file_access": true,
                   "needs_user_clarification": true,
                   "recommended_pipeline": "DIRECT_ANSWER | THINK_CRITIC_REPAIR | PLAN_THINK_CRITIC_REPAIR | TOOL_AGENT | ASK_USER_CLARIFICATION | REFUSE",
-                  "max_attempts": 1,
+                  "max_attempts": 0,
                   "success_threshold": 8,
                   "max_answer_tokens": 1200,
                   "reason": "Short reason under 30 words."
@@ -187,6 +305,15 @@ public class TaskClassifier {
                 """;
     }
 
+    /**
+     * Builds the user prompt sent to the classifier model.
+     *
+     * The word JSON is intentionally present in the full message set through the
+     * system prompt.
+     *
+     * That matters for OpenAI JSON-mode style structured calls, which can reject
+     * requests when no message contains the word JSON.
+     */
     private String buildUserPrompt(String userTask) {
         return """
                 Classify this user task.
@@ -196,53 +323,106 @@ public class TaskClassifier {
                 """.formatted(userTask);
     }
 
-    private TaskClassification parseAndNormalize(String rawJson, ClassifierProvider providerUsed, String normalizedTask) throws Exception {
+    /**
+     * Parses the model's JSON and then applies deterministic cleanup.
+     *
+     * The model is allowed to suggest:
+     * - task type
+     * - difficulty
+     * - pipeline
+     * - tool needs
+     * - success threshold
+     * - max_answer_tokens
+     *
+     * The model is not allowed to control attempts.
+     *
+     * Token budget flow:
+     * 1. Read classification.maxAnswerTokens from model JSON.
+     * 2. Upgrade obvious large-code tasks before final token normalization.
+     * 3. Clamp the token budget inside task-appropriate Java ranges.
+     * 4. Return the final validated value.
+     *
+     * Normalization here protects the rest of MiniAgent from weak classifier
+     * output:
+     * - missing enum values get safe defaults
+     * - web/file access automatically implies tools
+     * - tool-required tasks are forced to TOOL_AGENT unless they are
+     * clarification/refusal cases
+     * - large complete code requests get upgraded to hard code generation
+     */
+    private TaskClassification parseAndNormalize(
+            String rawJson,
+            ClassifierProvider providerUsed,
+            String normalizedTask) throws Exception {
         if (rawJson == null || rawJson.isBlank()) {
             throw new IllegalArgumentException("Classifier returned blank JSON.");
         }
 
         TaskClassification classification = mapper.readValue(rawJson, TaskClassification.class);
 
-        TaskType taskType = classification.taskType != null ? classification.taskType : TaskType.UNKNOWN;
-        TaskDifficulty difficulty = classification.difficulty != null ? classification.difficulty
+        TaskType taskType = classification.taskType != null
+                ? classification.taskType
+                : TaskType.UNKNOWN;
+
+        TaskDifficulty difficulty = classification.difficulty != null
+                ? classification.difficulty
                 : TaskDifficulty.MEDIUM;
+
         RecommendedPipeline pipeline = classification.recommendedPipeline != null
                 ? classification.recommendedPipeline
                 : RecommendedPipeline.THINK_CRITIC_REPAIR;
 
-        int maxAttempts = clamp(classification.maxAttempts, 1, 5, defaultAttemptsFor(pipeline, difficulty));
-        int successThreshold = clamp(classification.successThreshold, 6, 10, 8);
-        int maxAnswerTokens = clamp(classification.maxAnswerTokens, 500, 8000,
-                defaultMaxAnswerTokensFor(taskType, difficulty));
-
+        boolean needsDeepReasoning = classification.needsDeepReasoning;
         boolean needsTools = classification.needsTools;
         boolean needsWeb = classification.needsWeb;
         boolean needsFileAccess = classification.needsFileAccess;
+        boolean needsUserClarification = classification.needsUserClarification;
+
+        int successThreshold = clamp(classification.successThreshold, 6, 10, 8);
+
+        boolean largeCodeTask = looksLikeLargeCodeTask(normalizedTask);
+
+        if (largeCodeTask) {
+            taskType = TaskType.CODE_GENERATION;
+            difficulty = TaskDifficulty.HARD;
+            needsDeepReasoning = true;
+        }
+
+        int maxAnswerTokens = normalizeAnswerTokenBudget(
+                classification.maxAnswerTokens,
+                taskType,
+                difficulty,
+                normalizedTask);
 
         if (needsWeb || needsFileAccess) {
             needsTools = true;
         }
 
-        if (needsTools && pipeline != RecommendedPipeline.ASK_USER_CLARIFICATION
-                && pipeline != RecommendedPipeline.REFUSE) {
+        if (needsUserClarification) {
+            pipeline = RecommendedPipeline.ASK_USER_CLARIFICATION;
+        } else if (needsTools && pipeline != RecommendedPipeline.REFUSE) {
             pipeline = RecommendedPipeline.TOOL_AGENT;
+        }
+
+        if (largeCodeTask) {
+            /*
+             * Important:
+             * Do not override TOOL_AGENT here if the task also needs file/project access.
+             * A large code task can still require tools when the user asks the agent to
+             * inspect or edit files.
+             */
+            if (!needsTools
+                    && !needsUserClarification
+                    && pipeline != RecommendedPipeline.REFUSE) {
+                pipeline = RecommendedPipeline.PLAN_THINK_CRITIC_REPAIR;
+            }
         }
 
         String reason = classification.reason;
         if (reason == null || reason.isBlank()) {
             reason = "Classified by " + providerUsed + ".";
         }
-        
-        boolean needsDeepReasoning = classification.needsDeepReasoning;
-        
-if (looksLikeLargeCodeTask(normalizedTask)) {
-    taskType = TaskType.CODE_GENERATION;
-    difficulty = TaskDifficulty.HARD;
-    pipeline = RecommendedPipeline.PLAN_THINK_CRITIC_REPAIR;
-    maxAttempts = Math.max(maxAttempts, 3);
-    maxAnswerTokens = Math.max(maxAnswerTokens, 12000);
-    needsDeepReasoning = true;
-}
+
         return new TaskClassification(
                 taskType,
                 difficulty,
@@ -250,45 +430,298 @@ if (looksLikeLargeCodeTask(normalizedTask)) {
                 needsTools,
                 needsWeb,
                 needsFileAccess,
-                classification.needsUserClarification,
+                needsUserClarification,
                 pipeline,
-                maxAttempts,
+                0,
                 successThreshold,
                 maxAnswerTokens,
                 trimReason(reason),
                 providerUsed.name());
     }
-private static boolean looksLikeLargeCodeTask(String task) {
-    String q = task == null ? "" : task.toLowerCase(Locale.ROOT);
 
-    boolean code =
-            q.contains("code") ||
-                    q.contains("html") ||
-                    q.contains("javascript") ||
-                    q.contains("java") ||
-                    q.contains("python") ||
-                    q.contains("app") ||
-                    q.contains("editor");
+    /**
+     * Normalizes the classifier model's answer-token recommendation.
+     *
+     * This is the key method for your requested behavior.
+     *
+     * The classifier model has authority to choose the budget,
+     * but only inside the range that Java considers valid for the classified task.
+     *
+     * Example:
+     * - model says EASY GENERAL_QA with 16000 tokens
+     * - Java reduces it to the EASY GENERAL_QA ceiling
+     *
+     * Example:
+     * - model says HARD complete IDE/editor code with 4000 tokens
+     * - Java raises it to the large-code floor
+     *
+     * This makes the classifier authoritative but not dangerous.
+     */
+    private static int normalizeAnswerTokenBudget(
+            int modelSuggestedTokens,
+            TaskType taskType,
+            TaskDifficulty difficulty,
+            String userTask) {
+        int fallback = defaultMaxAnswerTokensFor(taskType, difficulty);
+        int candidate = modelSuggestedTokens > 0 ? modelSuggestedTokens : fallback;
 
-    boolean large =
-            q.contains("complete") ||
-                    q.contains("full") ||
-                    q.contains("working") ||
-                    q.contains("elaborate") ||
-                    q.contains("extremely detailed") ||
-                    q.contains("no placeholder") ||
-                    q.contains("must not include placeholders") ||
-                    q.contains("like vscode") ||
-                    q.contains("visual studio code");
+        int minAllowed = minimumAllowedAnswerTokensFor(taskType, difficulty, userTask);
+        int maxAllowed = maximumAllowedAnswerTokensFor(taskType, difficulty, userTask);
 
-    return code && large;
-}
+        if (minAllowed < MIN_ANSWER_TOKENS) {
+            minAllowed = MIN_ANSWER_TOKENS;
+        }
+
+        if (maxAllowed > MAX_ANSWER_TOKENS) {
+            maxAllowed = MAX_ANSWER_TOKENS;
+        }
+
+        if (minAllowed > maxAllowed) {
+            minAllowed = MIN_ANSWER_TOKENS;
+            maxAllowed = MAX_ANSWER_TOKENS;
+        }
+
+        return Math.max(minAllowed, Math.min(maxAllowed, candidate));
+    }
+
+    /**
+     * Defines the lower bound for answer tokens after classification.
+     *
+     * This prevents absurdly tiny output budgets for tasks where the user clearly
+     * asked for complete code, a full app, a serious debugging answer, or a large
+     * architecture plan.
+     */
+    private static int minimumAllowedAnswerTokensFor(
+            TaskType taskType,
+            TaskDifficulty difficulty,
+            String userTask) {
+        if (looksLikeVeryLargeCodeTask(userTask)) {
+            return 14000;
+        }
+
+        if (looksLikeLargeCodeTask(userTask)) {
+            return 12000;
+        }
+
+        if (taskType == TaskType.CODE_GENERATION || taskType == TaskType.CODE_DEBUGGING) {
+            return switch (difficulty) {
+                case EASY -> 2000;
+                case MEDIUM -> 5000;
+                case HARD -> 10000;
+            };
+        }
+
+        if (taskType == TaskType.ARCHITECTURE_DESIGN || taskType == TaskType.RESEARCH) {
+            return switch (difficulty) {
+                case EASY -> 1500;
+                case MEDIUM -> 3000;
+                case HARD -> 6000;
+            };
+        }
+
+        if (taskType == TaskType.WRITING || taskType == TaskType.SUMMARIZATION) {
+            return switch (difficulty) {
+                case EASY -> 800;
+                case MEDIUM -> 1500;
+                case HARD -> 3000;
+            };
+        }
+
+        if (taskType == TaskType.MEDICAL) {
+            return switch (difficulty) {
+                case EASY -> 1000;
+                case MEDIUM -> 2000;
+                case HARD -> 3500;
+            };
+        }
+
+        return switch (difficulty) {
+            case EASY -> 500;
+            case MEDIUM -> 1800;
+            case HARD -> 4000;
+        };
+    }
+
+    /**
+     * Defines the upper bound for answer tokens after classification.
+     *
+     * This prevents the classifier from wasting massive output budgets on tiny
+     * questions while still allowing very large code tasks to reach 16000.
+     */
+    private static int maximumAllowedAnswerTokensFor(
+            TaskType taskType,
+            TaskDifficulty difficulty,
+            String userTask) {
+        if (looksLikeVeryLargeCodeTask(userTask)) {
+            return 16000;
+        }
+
+        if (looksLikeLargeCodeTask(userTask)) {
+            return 16000;
+        }
+
+        if (taskType == TaskType.CODE_GENERATION || taskType == TaskType.CODE_DEBUGGING) {
+            return switch (difficulty) {
+                case EASY -> 5000;
+                case MEDIUM -> 10000;
+                case HARD -> 16000;
+            };
+        }
+
+        if (taskType == TaskType.ARCHITECTURE_DESIGN || taskType == TaskType.RESEARCH) {
+            return switch (difficulty) {
+                case EASY -> 4000;
+                case MEDIUM -> 8000;
+                case HARD -> 14000;
+            };
+        }
+
+        if (taskType == TaskType.WRITING || taskType == TaskType.SUMMARIZATION) {
+            return switch (difficulty) {
+                case EASY -> 3000;
+                case MEDIUM -> 5000;
+                case HARD -> 8000;
+            };
+        }
+
+        if (taskType == TaskType.MEDICAL) {
+            return switch (difficulty) {
+                case EASY -> 3000;
+                case MEDIUM -> 6000;
+                case HARD -> 9000;
+            };
+        }
+
+        return switch (difficulty) {
+            case EASY -> 1800;
+            case MEDIUM -> 5000;
+            case HARD -> 10000;
+        };
+    }
+
+    /**
+     * Detects large code-generation requests that the classifier model may
+     * under-score.
+     *
+     * This is a practical guardrail for prompts like:
+     * "complete code", "full working app", "no placeholders", "VS Code-like
+     * editor".
+     *
+     * It upgrades classification quality, token budget, and deep-reasoning need.
+     * It does not set attempts.
+     */
+    private static boolean looksLikeLargeCodeTask(String task) {
+        String q = task == null ? "" : task.toLowerCase(Locale.ROOT);
+
+        boolean code = q.contains("code") ||
+                q.contains("html") ||
+                q.contains("javascript") ||
+                q.contains("typescript") ||
+                q.contains("java") ||
+                q.contains("python") ||
+                q.contains("spring") ||
+                q.contains("android") ||
+                q.contains("kotlin") ||
+                q.contains("app") ||
+                q.contains("editor") ||
+                q.contains("frontend") ||
+                q.contains("backend");
+
+        boolean large = q.contains("complete") ||
+                q.contains("full") ||
+                q.contains("working") ||
+                q.contains("production") ||
+                q.contains("elaborate") ||
+                q.contains("advanced") ||
+                q.contains("complex") ||
+                q.contains("extremely detailed") ||
+                q.contains("no placeholder") ||
+                q.contains("no placeholders") ||
+                q.contains("must not include placeholders") ||
+                q.contains("like vscode") ||
+                q.contains("vs code") ||
+                q.contains("visual studio code") ||
+                q.contains("microsoft visual studio") ||
+                q.contains("all features");
+
+        return code && large;
+    }
+
+    /**
+     * Detects the kind of request that should be given the largest answer budget.
+     *
+     * This catches the exact failure class you hit:
+     * a user asks for a complete VS-Code-like / Visual-Studio-like editor or app,
+     * and the classifier returns a budget that is too small to ever produce a
+     * usable first draft.
+     */
+    private static boolean looksLikeVeryLargeCodeTask(String task) {
+        String q = task == null ? "" : task.toLowerCase(Locale.ROOT);
+
+        boolean editorOrIde = q.contains("vs code") ||
+                q.contains("vscode") ||
+                q.contains("visual studio code") ||
+                q.contains("visual studio") ||
+                q.contains("microsoft visual studio") ||
+                q.contains("texteditor") ||
+                q.contains("text editor") ||
+                q.contains("ide");
+
+        boolean completeFeatureSet = q.contains("all features") ||
+                q.contains("complete with") ||
+                q.contains("complete code") ||
+                q.contains("full working") ||
+                q.contains("production-grade") ||
+                q.contains("production grade") ||
+                q.contains("complex complete");
+
+        boolean frontendApp = q.contains("index.html") ||
+                q.contains("html") ||
+                q.contains("javascript") ||
+                q.contains("frontend") ||
+                q.contains("app");
+
+        return editorOrIde && completeFeatureSet && frontendApp;
+    }
+
+    /**
+     * Builds a deterministic fallback classification when every provider fails.
+     *
+     * This avoids a silly failure mode where the whole agent crashes before trying
+     * the real task simply because a cheap classifier had a temporary outage or
+     * returned malformed JSON.
+     *
+     * Fallback is intentionally conservative:
+     * - no external tools
+     * - no web
+     * - no file access
+     * - no attempts
+     *
+     * Token budget is still chosen through the same normalization path used for
+     * model classifications.
+     */
     private TaskClassification fallbackClassification(String userTask, List<String> failures) {
         TaskType taskType = roughTaskType(userTask);
         TaskDifficulty difficulty = roughDifficulty(userTask);
+
         RecommendedPipeline pipeline = difficulty == TaskDifficulty.HARD
                 ? RecommendedPipeline.PLAN_THINK_CRITIC_REPAIR
                 : RecommendedPipeline.THINK_CRITIC_REPAIR;
+
+        boolean needsDeepReasoning = difficulty != TaskDifficulty.EASY;
+
+        if (looksLikeLargeCodeTask(userTask)) {
+            taskType = TaskType.CODE_GENERATION;
+            difficulty = TaskDifficulty.HARD;
+            pipeline = RecommendedPipeline.PLAN_THINK_CRITIC_REPAIR;
+            needsDeepReasoning = true;
+        }
+
+        int maxAnswerTokens = normalizeAnswerTokenBudget(
+                0,
+                taskType,
+                difficulty,
+                userTask);
 
         String reason = "Model classification failed; used deterministic fallback.";
 
@@ -299,19 +732,26 @@ private static boolean looksLikeLargeCodeTask(String task) {
         return new TaskClassification(
                 taskType,
                 difficulty,
-                difficulty != TaskDifficulty.EASY,
+                needsDeepReasoning,
                 false,
                 false,
                 false,
                 false,
                 pipeline,
-                defaultAttemptsFor(pipeline, difficulty),
+                0,
                 8,
-                defaultMaxAnswerTokensFor(taskType, difficulty),
+                maxAnswerTokens,
                 trimReason(reason),
                 "FALLBACK");
     }
 
+    /**
+     * Creates provider fallback order.
+     *
+     * If AUTO is selected, the normal order is OpenAI -> Gemini -> Claude.
+     * If a specific provider is selected, that provider is tried first and the
+     * others remain as backup.
+     */
     private List<ClassifierProvider> buildProviderOrder(ClassifierProvider preferredProvider) {
         List<ClassifierProvider> providers = new ArrayList<>();
 
@@ -337,6 +777,12 @@ private static boolean looksLikeLargeCodeTask(String task) {
         return providers;
     }
 
+    /**
+     * Verifies that the OpenAI classifier client can actually be used.
+     *
+     * This check is done before calling the provider so the failure message is
+     * clear.
+     */
     private void ensureOpenAiAvailable() {
         if (openAiClient == null) {
             throw new IllegalStateException("OpenAI client is null.");
@@ -348,6 +794,12 @@ private static boolean looksLikeLargeCodeTask(String task) {
         }
     }
 
+    /**
+     * Verifies that the Gemini classifier client can actually be used.
+     *
+     * This keeps provider fallback readable in logs instead of failing later with a
+     * vague null pointer.
+     */
     private void ensureGeminiAvailable() {
         if (geminiClient == null) {
             throw new IllegalStateException("Gemini client is null.");
@@ -359,6 +811,12 @@ private static boolean looksLikeLargeCodeTask(String task) {
         }
     }
 
+    /**
+     * Verifies that the Claude classifier client can actually be used.
+     *
+     * This method mirrors the OpenAI/Gemini checks so provider availability is
+     * handled consistently.
+     */
     private void ensureClaudeAvailable() {
         if (claudeClient == null) {
             throw new IllegalStateException("Claude client is null.");
@@ -370,6 +828,14 @@ private static boolean looksLikeLargeCodeTask(String task) {
         }
     }
 
+    /**
+     * Validates the incoming task and trims it to a classifier-safe size.
+     *
+     * The classifier does not need the entire conversation or a huge pasted file.
+     * It only needs enough text to determine routing.
+     *
+     * Trimming here reduces cost and avoids wasting classifier tokens.
+     */
     private String validateAndNormalizeTask(String userTask) {
         if (userTask == null || userTask.isBlank()) {
             throw new IllegalArgumentException("Cannot classify an empty task.");
@@ -377,14 +843,19 @@ private static boolean looksLikeLargeCodeTask(String task) {
 
         String cleaned = userTask.trim();
 
-        int maxCharacters = 8000;
-        if (cleaned.length() > maxCharacters) {
-            cleaned = cleaned.substring(0, maxCharacters);
+        if (cleaned.length() > MAX_CLASSIFIER_INPUT_CHARS) {
+            cleaned = cleaned.substring(0, MAX_CLASSIFIER_INPUT_CHARS);
         }
 
         return cleaned;
     }
 
+    /**
+     * Normalizes model names supplied by config or tests.
+     *
+     * Blank model names should not crash the classifier.
+     * They are replaced by the known default model.
+     */
     private static String cleanModel(String model, String fallback) {
         if (model == null || model.isBlank()) {
             return fallback;
@@ -392,6 +863,16 @@ private static boolean looksLikeLargeCodeTask(String task) {
         return model.trim();
     }
 
+    /**
+     * Clamps integer values coming from the model.
+     *
+     * This is used for quality settings like successThreshold.
+     * Answer tokens use normalizeAnswerTokenBudget(), because token budget needs
+     * task-aware ranges rather than one flat min/max clamp.
+     *
+     * It is not used for maxAttempts because TaskClassifier does not own attempt
+     * policy.
+     */
     private static int clamp(int value, int min, int max, int fallback) {
         if (value <= 0) {
             return fallback;
@@ -399,53 +880,85 @@ private static boolean looksLikeLargeCodeTask(String task) {
         return Math.max(min, Math.min(max, value));
     }
 
-    private static int defaultAttemptsFor(RecommendedPipeline pipeline, TaskDifficulty difficulty) {
-        if (pipeline == RecommendedPipeline.DIRECT_ANSWER) {
-            return 1;
-        }
-        if (pipeline == RecommendedPipeline.PLAN_THINK_CRITIC_REPAIR) {
-            return difficulty == TaskDifficulty.HARD ? 4 : 3;
-        }
-        if (pipeline == RecommendedPipeline.TOOL_AGENT) {
-            return 1;
-        }
-        if (pipeline == RecommendedPipeline.ASK_USER_CLARIFICATION || pipeline == RecommendedPipeline.REFUSE) {
-            return 1;
-        }
-        return difficulty == TaskDifficulty.EASY ? 2 : 3;
-    }
-
+    /**
+     * Chooses a practical default output budget when the classifier model omits
+     * max_answer_tokens or returns a non-positive value.
+     *
+     * This is not the same as provider max tokens.
+     * This is the app-level final-answer budget.
+     */
     private static int defaultMaxAnswerTokensFor(TaskType taskType, TaskDifficulty difficulty) {
         if (taskType == TaskType.CODE_GENERATION || taskType == TaskType.CODE_DEBUGGING) {
-            return difficulty == TaskDifficulty.HARD ? 6000 : 4000;
+            return switch (difficulty) {
+                case EASY -> 3000;
+                case MEDIUM -> 7000;
+                case HARD -> 12000;
+            };
         }
+
         if (taskType == TaskType.ARCHITECTURE_DESIGN || taskType == TaskType.RESEARCH) {
-            return difficulty == TaskDifficulty.HARD ? 5000 : 3000;
+            return switch (difficulty) {
+                case EASY -> 2500;
+                case MEDIUM -> 4500;
+                case HARD -> 8000;
+            };
         }
+
         if (taskType == TaskType.WRITING || taskType == TaskType.SUMMARIZATION) {
-            return 2500;
+            return switch (difficulty) {
+                case EASY -> 1500;
+                case MEDIUM -> 3000;
+                case HARD -> 5000;
+            };
         }
-        return difficulty == TaskDifficulty.EASY ? 1200 : 2500;
+
+        if (taskType == TaskType.MEDICAL) {
+            return switch (difficulty) {
+                case EASY -> 1500;
+                case MEDIUM -> 3000;
+                case HARD -> 5000;
+            };
+        }
+
+        return switch (difficulty) {
+            case EASY -> 1200;
+            case MEDIUM -> 2500;
+            case HARD -> 5000;
+        };
     }
 
+    /**
+     * Cleans the reason field so logs stay readable.
+     *
+     * Classifier reasons are diagnostic breadcrumbs, not essays.
+     */
     private static String trimReason(String reason) {
         if (reason == null) {
             return "";
         }
+
         String cleaned = reason.trim().replaceAll("\\s+", " ");
-        int maxLength = 240;
-        if (cleaned.length() <= maxLength) {
+
+        if (cleaned.length() <= MAX_REASON_CHARS) {
             return cleaned;
         }
-        return cleaned.substring(0, maxLength);
+
+        return cleaned.substring(0, MAX_REASON_CHARS);
     }
 
+    /**
+     * Heuristic task-type detection used only when provider classification fails.
+     *
+     * This is deliberately simple.
+     * The real model classifier usually does better, but this fallback is good
+     * enough to avoid routing everything as generic Q&A during provider outages.
+     */
     private static TaskType roughTaskType(String task) {
-        String lower = task.toLowerCase(Locale.ROOT);
+        String lower = task == null ? "" : task.toLowerCase(Locale.ROOT);
 
         if (containsAny(lower, "java", "python", "code", "class", "method", "compile", "bug", "exception",
-                "spring boot")) {
-            if (containsAny(lower, "error", "bug", "fix", "compile", "exception", "stack trace")) {
+                "spring boot", "html", "javascript", "typescript", "kotlin", "android", "frontend", "backend")) {
+            if (containsAny(lower, "error", "bug", "fix", "compile", "exception", "stack trace", "failed")) {
                 return TaskType.CODE_DEBUGGING;
             }
             return TaskType.CODE_GENERATION;
@@ -474,16 +987,28 @@ private static boolean looksLikeLargeCodeTask(String task) {
         return TaskType.GENERAL_QA;
     }
 
+    /**
+     * Heuristic difficulty detection used only when provider classification fails.
+     *
+     * This is intentionally rough.
+     * It should classify obvious hard tasks as hard, but it should not try to
+     * replace the actual classifier model.
+     */
     private static TaskDifficulty roughDifficulty(String task) {
-        String lower = task.toLowerCase(Locale.ROOT);
-        int length = task.length();
+        String lower = task == null ? "" : task.toLowerCase(Locale.ROOT);
+        int length = task == null ? 0 : task.length();
+
+        if (looksLikeLargeCodeTask(task)) {
+            return TaskDifficulty.HARD;
+        }
 
         if (length > 2500) {
             return TaskDifficulty.HARD;
         }
 
-        if (containsAny(lower, "architecture", "recursive", "agent", "debug", "compile", "production", "security",
-                "medical", "legal", "financial")) {
+        if (containsAny(lower, "architecture", "recursive", "agent", "debug", "compile", "production",
+                "security", "medical", "legal", "financial", "complete code", "full working",
+                "all features", "visual studio", "vs code", "vscode")) {
             return TaskDifficulty.HARD;
         }
 
@@ -494,6 +1019,12 @@ private static boolean looksLikeLargeCodeTask(String task) {
         return TaskDifficulty.EASY;
     }
 
+    /**
+     * Tiny helper for readable heuristic checks.
+     *
+     * This avoids noisy repeated null/blank checks in roughTaskType and
+     * roughDifficulty.
+     */
     private static boolean containsAny(String text, String... terms) {
         if (text == null) {
             return false;
@@ -543,26 +1074,89 @@ private static boolean looksLikeLargeCodeTask(String task) {
         REFUSE
     }
 
+    /**
+     * DTO returned by the classifier.
+     *
+     * Fields remain public because this class is used as a simple Jackson DTO and
+     * older code likely reads the values directly.
+     *
+     * maxAttempts is intentionally retained but neutralized:
+     * - Old callers can still compile.
+     * - The classifier JSON still carries max_attempts only for compatibility.
+     * - This class always stores it as 0.
+     * - AgentRunPlan/runtime policy must decide the actual attempts.
+     */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class TaskClassification {
 
+        @JsonProperty("task_type")
         public TaskType taskType;
+
+        @JsonProperty("difficulty")
         public TaskDifficulty difficulty;
+
+        @JsonProperty("needs_deep_reasoning")
         public boolean needsDeepReasoning;
+
+        @JsonProperty("needs_tools")
         public boolean needsTools;
+
+        @JsonProperty("needs_web")
         public boolean needsWeb;
+
+        @JsonProperty("needs_file_access")
         public boolean needsFileAccess;
+
+        @JsonProperty("needs_user_clarification")
         public boolean needsUserClarification;
+
+        @JsonProperty("recommended_pipeline")
         public RecommendedPipeline recommendedPipeline;
+
+        /**
+         * Backward-compatible field only.
+         *
+         * Do not let TaskClassifier set attempts.
+         * Do not use this for runtime loop count.
+         */
+        @JsonProperty("max_attempts")
         public int maxAttempts;
+
+        @JsonProperty("success_threshold")
         public int successThreshold;
+
+        /**
+         * Classifier-owned answer budget.
+         *
+         * This value is read from model JSON, then normalized by Java before the
+         * final TaskClassification is returned.
+         */
+        @JsonProperty("max_answer_tokens")
         public int maxAnswerTokens;
+
+        @JsonProperty("reason")
         public String reason;
+
         public String providerUsed;
 
+        /**
+         * Required by Jackson.
+         *
+         * Keep this empty.
+         * Normalization happens after deserialization in parseAndNormalize().
+         */
         public TaskClassification() {
         }
 
+        /**
+         * Main constructor used by this class.
+         *
+         * The maxAttempts parameter is kept only so older internal calls do not break
+         * immediately.
+         *
+         * The assigned value is always 0 because attempts are not owned by
+         * TaskClassifier.
+         */
         public TaskClassification(
                 TaskType taskType,
                 TaskDifficulty difficulty,
@@ -587,7 +1181,14 @@ private static boolean looksLikeLargeCodeTask(String task) {
             this.recommendedPipeline = Objects.requireNonNullElse(
                     recommendedPipeline,
                     RecommendedPipeline.THINK_CRITIC_REPAIR);
-            this.maxAttempts = maxAttempts;
+
+            /*
+             * Intentionally ignore the incoming value.
+             * If a model, old test, or old caller passes 3/4/5 here, it must not affect
+             * runtime behavior.
+             */
+            this.maxAttempts = 0;
+
             this.successThreshold = successThreshold;
             this.maxAnswerTokens = maxAnswerTokens;
             this.reason = reason;

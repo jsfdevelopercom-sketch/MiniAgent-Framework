@@ -761,7 +761,7 @@ public class Agent {
         });
 
         try {
-            StructuredResponse response = future.get(1000, TimeUnit.SECONDS);
+            StructuredResponse response = future.get(500, TimeUnit.SECONDS);
             updateThought("DeepThink completed.");
             return response;
         } catch (TimeoutException e) {
@@ -1410,7 +1410,8 @@ public class Agent {
                 Collections.emptyList(),
                 plan.isAllowFullHistory() ? safeHistory : Collections.emptyList(),
                 route.getGeneratorTemperature(),
-                nextAttempt);
+                nextAttempt,
+                plan);
 
         if (!generationResult.isSuccess()) {
             repairMemory.ingestFailures(generationResult.getFailures());
@@ -1521,7 +1522,8 @@ public class Agent {
                 structuralFixes,
                 missingInstructions,
                 safeDataset,
-                nextAttempt);
+                nextAttempt,
+                plan);
 
         if (!repairResult.isSuccess()) {
             repairMemory.ingestFailures(repairResult.getFailures());
@@ -1558,8 +1560,8 @@ public class Agent {
                         Collections.emptyList(),
                         Collections.emptyList(),
                         route.getGeneratorTemperature(),
-                        nextAttempt);
-
+                        nextAttempt,
+                        plan);
                 if (replanResult.isSuccess()) {
                     StructuredResponse candidateDraft = replanResult.getValue().normalize();
 
@@ -1659,7 +1661,8 @@ public class Agent {
                 safeDataset,
                 Collections.emptyList(),
                 Collections.emptyList(),
-                nextAttempt);
+                nextAttempt,
+                plan);
 
         EvaluationResult eval;
 

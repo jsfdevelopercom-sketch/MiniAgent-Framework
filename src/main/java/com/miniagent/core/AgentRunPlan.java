@@ -80,7 +80,7 @@ public class AgentRunPlan {
                 classification.recommendedPipeline == TaskClassifier.RecommendedPipeline.PLAN_THINK_CRITIC_REPAIR ||
                 classification.recommendedPipeline == TaskClassifier.RecommendedPipeline.TOOL_AGENT;
 
-        Duration wallClock = complexDeepDive ? Duration.ofMinutes(20) : Duration.ofMinutes(10);
+        Duration wallClock = complexDeepDive ? Duration.ofSeconds(500) : Duration.ofSeconds(90);
 
         return new AgentRunPlan(
                 classification,

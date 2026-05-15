@@ -123,7 +123,7 @@ public class GeminiHttpClient {
 
                 boolean highModel = com.miniagent.core.ModelConstants.isHighModel(targetModel);
                 if (highModel) {
-                    genConfig.put("maxOutputTokens", 8192);
+                    genConfig.put("maxOutputTokens", 16000);
                 }
 
                 // Modulate temperature slightly on retry to break deterministic empty deadlocks
@@ -216,10 +216,12 @@ public class GeminiHttpClient {
                             resObj.put("thoughtSignature", sigNode.asText());
                             responseJson = mapper.writeValueAsString(resObj);
                         } else {
-                            System.err.println("[GEMINI WARNING] Could not re-inject signature. Response is not a JSON object.");
+                            System.err.println(
+                                    "[GEMINI WARNING] Could not re-inject signature. Response is not a JSON object.");
                         }
                     } catch (Exception parseEx) {
-                        System.err.println("[GEMINI WARNING] Could not natively re-inject signature. Malformed JSON: " + parseEx.getMessage());
+                        System.err.println("[GEMINI WARNING] Could not natively re-inject signature. Malformed JSON: "
+                                + parseEx.getMessage());
                     }
                 }
 
@@ -279,7 +281,7 @@ public class GeminiHttpClient {
                 genConfig.put("temperature", temperature);
             }
             if (highModel) {
-                genConfig.put("maxOutputTokens", 8192);
+                genConfig.put("maxOutputTokens", 16000);
             }
             if (!genConfig.isEmpty()) {
                 request.put("generationConfig", genConfig);
