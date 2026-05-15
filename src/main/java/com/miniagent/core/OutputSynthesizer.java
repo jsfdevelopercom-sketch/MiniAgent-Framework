@@ -98,12 +98,24 @@ public class OutputSynthesizer {
     public StructuredResponse synthesize(
             StructuredResponse draft,
             String originalQuery,
-            String synthesizerModel) {
+            String synthesizerModel,
+            AgentRunPlan plan) {
         StructuredResponse safeDraft = draft == null
                 ? StructuredResponse.empty()
                 : draft.normalize();
 
         String bestText = chooseBestDraftText(safeDraft);
+
+        boolean isHeavyTask = false;
+        if (plan != null && plan.getClassification() != null) {
+            TaskClassifier.TaskClassification classification = plan.getClassification();
+            isHeavyTask = classification.difficulty == TaskClassifier.TaskDifficulty.HARD || 
+                          plan.getMaxAnswerTokens() >= 6000;
+        }
+
+        if (isHeavyTask) {
+            return preserveHeavyDraftWithoutModelSynthesis(safeDraft, bestText);
+        }
 
         if (shouldBypassSynthesisForCode(bestText, originalQuery)) {
             return preserveCodeDraftWithoutModelSynthesis(safeDraft, bestText);
@@ -340,6 +352,34 @@ public class OutputSynthesizer {
         direct.putMeta("synthesisSkipped", true);
         direct.putMeta("synthesisSkipReason", "code_answer_preserved");
         direct.putMeta("synthesisBypassRule", "user_asked_for_code_and_answer_contains_code");
+
+        return direct.normalize();
+    }
+
+    /**
+     * Returns a heavy draft directly without sending it to a final model.
+     * Uses hardcoded cleanup to ensure formatting is presentable without LLM latency.
+     */
+    private StructuredResponse preserveHeavyDraftWithoutModelSynthesis(
+            StructuredResponse safeDraft,
+            String bestText) {
+        StructuredResponse direct = safeDraft == null
+                ? StructuredResponse.empty()
+                : safeDraft.normalize();
+
+        String currentSummary = direct.getSummary();
+
+        if (currentSummary == null || currentSummary.isBlank()) {
+            direct.setSummary(bestText == null ? "" : bestText);
+        } else {
+            direct.setSummary(cleanFinalSummary(currentSummary, bestText));
+        }
+
+        direct.setThought_process("Heavy task answer preserved without destructive final synthesis.");
+        direct.setSpoken_summary("I have prepared the full output on screen.");
+        direct.putMeta("synthesisSkipped", true);
+        direct.putMeta("synthesisSkipReason", "heavy_task_answer_preserved");
+        direct.putMeta("synthesisBypassRule", "classified_as_hard_or_large_token_budget");
 
         return direct.normalize();
     }

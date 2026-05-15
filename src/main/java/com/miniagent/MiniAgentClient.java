@@ -95,6 +95,7 @@ public class MiniAgentClient {
                 dataset,
                 liveInjections,
                 java.util.Collections.emptyList(),
+                null,
                 null
         );
 

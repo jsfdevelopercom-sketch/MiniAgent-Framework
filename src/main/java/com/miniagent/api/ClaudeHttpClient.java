@@ -49,7 +49,7 @@ public class ClaudeHttpClient {
             boolean highModel = com.miniagent.core.ModelConstants.isHighModel(model);
             Map<String, Object> request = new HashMap<>();
             request.put("model", model);
-            request.put("max_tokens", 16000);
+            request.put("max_tokens", 12000);
             request.put("system", systemPrompt);
             if (temperature != null)
                 request.put("temperature", temperature);
@@ -100,7 +100,7 @@ public class ClaudeHttpClient {
                     .header("Content-Type", "application/json")
                     .header("x-api-key", apiKey)
                     .header("anthropic-version", "2023-06-01")
-                    .timeout(highModel ? Duration.ofMinutes(7) : Duration.ofMinutes(3))
+                    .timeout(highModel ? Duration.ofMinutes(10) : Duration.ofMinutes(4))
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
@@ -166,7 +166,7 @@ public class ClaudeHttpClient {
             boolean highModel = com.miniagent.core.ModelConstants.isHighModel(model);
             Map<String, Object> request = new HashMap<>();
             request.put("model", model);
-            request.put("max_tokens", 16000);
+            request.put("max_tokens", 12000);
             request.put("system", systemPrompt);
             if (temperature != null)
                 request.put("temperature", temperature);
@@ -181,7 +181,7 @@ public class ClaudeHttpClient {
                     .header("Content-Type", "application/json")
                     .header("x-api-key", apiKey)
                     .header("anthropic-version", "2023-06-01")
-                    .timeout(highModel ? Duration.ofMinutes(7) : Duration.ofMinutes(3))
+                    .timeout(highModel ? Duration.ofMinutes(10) : Duration.ofMinutes(4))
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 

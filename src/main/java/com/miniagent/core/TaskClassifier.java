@@ -70,7 +70,7 @@ public class TaskClassifier {
      * survive.
      */
     private static final int MIN_ANSWER_TOKENS = 500;
-    private static final int MAX_ANSWER_TOKENS = 16000;
+    private static final int MAX_ANSWER_TOKENS = 12000;
 
     private final OpenAiHttpClient openAiClient;
     private final GeminiHttpClient geminiClient;
@@ -269,14 +269,14 @@ public class TaskClassifier {
                 - max_answer_tokens is the estimated final answer budget.
                 - It must be an integer.
                 - It must never be below 500.
-                - It must never be above 16000.
+                - It must never be above 12000.
                 - For short EASY non-code tasks: use 500 to 1800.
                 - For MEDIUM non-code tasks: use 1800 to 5000.
                 - For HARD non-code tasks: use 4000 to 10000.
                 - For EASY code tasks: use 2000 to 5000.
                 - For MEDIUM code/debugging tasks: use 5000 to 10000.
-                - For HARD complete code/debugging tasks: use 10000 to 16000.
-                - For very large complete app/frontend/backend generation: use 14000 to 16000.
+                - For HARD complete code/debugging tasks: use 8000 to 12000.
+                - For very large complete app/frontend/backend generation: use 10000 to 12000.
                 - For research or architecture design: use 3000 to 14000 depending on difficulty.
                 - For simple summaries or rewrites: use 800 to 3000.
                 - Do not choose tiny token budgets for complete-code requests.
@@ -448,7 +448,7 @@ public class TaskClassifier {
      * but only inside the range that Java considers valid for the classified task.
      *
      * Example:
-     * - model says EASY GENERAL_QA with 16000 tokens
+     * - model says EASY GENERAL_QA with 12000 tokens
      * - Java reduces it to the EASY GENERAL_QA ceiling
      *
      * Example:
@@ -546,25 +546,25 @@ public class TaskClassifier {
      * Defines the upper bound for answer tokens after classification.
      *
      * This prevents the classifier from wasting massive output budgets on tiny
-     * questions while still allowing very large code tasks to reach 16000.
+     * questions while still allowing very large code tasks to reach 12000.
      */
     private static int maximumAllowedAnswerTokensFor(
             TaskType taskType,
             TaskDifficulty difficulty,
             String userTask) {
         if (looksLikeVeryLargeCodeTask(userTask)) {
-            return 16000;
+            return 12000;
         }
 
         if (looksLikeLargeCodeTask(userTask)) {
-            return 16000;
+            return 12000;
         }
 
         if (taskType == TaskType.CODE_GENERATION || taskType == TaskType.CODE_DEBUGGING) {
             return switch (difficulty) {
                 case EASY -> 5000;
                 case MEDIUM -> 10000;
-                case HARD -> 16000;
+                case HARD -> 12000;
             };
         }
 

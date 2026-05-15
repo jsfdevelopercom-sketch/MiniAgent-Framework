@@ -123,7 +123,7 @@ public class GeminiHttpClient {
 
                 boolean highModel = com.miniagent.core.ModelConstants.isHighModel(targetModel);
                 if (highModel) {
-                    genConfig.put("maxOutputTokens", 16000);
+                    genConfig.put("maxOutputTokens", 12000);
                 }
 
                 // Modulate temperature slightly on retry to break deterministic empty deadlocks
@@ -147,7 +147,7 @@ public class GeminiHttpClient {
                 HttpRequest req = HttpRequest.newBuilder()
                         .uri(URI.create(url))
                         .header("Content-Type", "application/json")
-                        .timeout(highModel ? Duration.ofMinutes(7) : Duration.ofMinutes(3))
+                        .timeout(highModel ? Duration.ofMinutes(10) : Duration.ofMinutes(4))
                         .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                         .build();
 
@@ -281,7 +281,7 @@ public class GeminiHttpClient {
                 genConfig.put("temperature", temperature);
             }
             if (highModel) {
-                genConfig.put("maxOutputTokens", 16000);
+                genConfig.put("maxOutputTokens", 12000);
             }
             if (!genConfig.isEmpty()) {
                 request.put("generationConfig", genConfig);
@@ -294,7 +294,7 @@ public class GeminiHttpClient {
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .header("Content-Type", "application/json")
-                    .timeout(highModel ? Duration.ofMinutes(7) : Duration.ofMinutes(3))
+                    .timeout(highModel ? Duration.ofMinutes(10) : Duration.ofMinutes(4))
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 

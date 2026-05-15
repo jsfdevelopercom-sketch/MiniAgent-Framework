@@ -239,7 +239,8 @@ public class Agent {
                         safeDataset,
                         Collections.emptyList(),
                         safeHistory,
-                        temperature).normalize();
+                        temperature,
+                        null).normalize();
 
                 recordStageUsage(
                         safeUserId,
@@ -268,7 +269,8 @@ public class Agent {
                 StructuredResponse synthesized = synthesizer.synthesize(
                         draft,
                         safeQuery,
-                        ModelConstants.GPT_4_1_MINI).normalize();
+                        ModelConstants.GPT_4_1_MINI,
+                        null).normalize();
 
                 recordStageUsage(
                         safeUserId,
@@ -585,7 +587,8 @@ public class Agent {
                                 safeQuery,
                                 state,
                                 route,
-                                beforeDecision);
+                                beforeDecision,
+                                plan);
 
                         traceLogger.runFinished(
                                 runId,
@@ -658,7 +661,8 @@ public class Agent {
                                             .acceptPartial("Repair/replan failed without a usable candidate draft."),
                                     runId,
                                     safeUserId,
-                                    runStart);
+                                    runStart,
+                                    plan);
                         }
                     }
 
@@ -699,7 +703,8 @@ public class Agent {
                                 safeQuery,
                                 state,
                                 route,
-                                afterDecision);
+                                afterDecision,
+                                plan);
 
                         traceLogger.runFinished(
                                 runId,
@@ -723,7 +728,8 @@ public class Agent {
                                 safeQuery,
                                 state,
                                 route,
-                                afterDecision);
+                                afterDecision,
+                                plan);
 
                         traceLogger.runFinished(
                                 runId,
@@ -847,7 +853,8 @@ public class Agent {
                         safeDataset == null ? Collections.emptyMap() : safeDataset,
                         Collections.emptyList(),
                         Collections.emptyList(),
-                        0.0).normalize();
+                        0.0,
+                        null).normalize();
 
                 recordStageUsage(
                         safeUserId,
@@ -1440,7 +1447,8 @@ public class Agent {
                         recoveryDecision,
                         runId,
                         safeUserId,
-                        runStart);
+                        runStart,
+                        plan);
             }
 
             return null;
@@ -1597,7 +1605,8 @@ public class Agent {
                     recoveryDecision,
                     runId,
                     safeUserId,
-                    runStart);
+                    runStart,
+                    plan);
 
             return null;
         }
@@ -1732,7 +1741,8 @@ public class Agent {
             String userQuery,
             AgentRunState state,
             ModelRoute route,
-            StopPolicy.StopDecision decision) {
+            StopPolicy.StopDecision decision,
+            AgentRunPlan plan) {
         StructuredResponse best = state.getBestDraft();
 
         if (best == null) {
@@ -1760,7 +1770,8 @@ public class Agent {
         StructuredResponse synthesized = synthesizer.synthesize(
                 best,
                 userQuery,
-                route.getSynthesizerModel()).normalize();
+                route.getSynthesizerModel(),
+                plan).normalize();
 
         if (VERBOSE_LOGGING) {
             System.out.println("\n[VERBOSE] *** MODEL SELECTED FOR FINAL SYNTHESIS: "
@@ -1810,12 +1821,13 @@ public class Agent {
             ThoughtRecoveryDecision recoveryDecision,
             String runId,
             String safeUserId,
-            long runStart) {
+            long runStart,
+            AgentRunPlan plan) {
         StopPolicy.StopDecision stopDecision = recoveryDecision.getAction() == ThoughtRecoveryAction.HARD_STOP
                 ? StopPolicy.StopDecision.hardStop(recoveryDecision.getReason())
                 : StopPolicy.StopDecision.partialStop(recoveryDecision.getReason());
 
-        StructuredResponse finished = finishFromStopDecision(userQuery, state, route, stopDecision);
+        StructuredResponse finished = finishFromStopDecision(userQuery, state, route, stopDecision, plan);
 
         traceLogger.runFinished(
                 runId,

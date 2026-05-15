@@ -56,10 +56,35 @@ public class MiniAgentWorker {
             Map<String, Object> dataset,
             List<String> liveInjections,
             List<Map<String, String>> history,
-            Double temperature
+            Double temperature,
+            AgentRunPlan plan
     ) {
         String sysPrompt = promptFactory.buildWorkerSystemPrompt(domainContext, model);
         String userPrompt = promptFactory.buildWorkerUserPrompt(taskInstructions, dataset, liveInjections);
+
+        boolean isLargeFreeform = false;
+        if (plan != null && plan.getClassification() != null) {
+            TaskClassifier.TaskType taskType = plan.getClassification().taskType;
+            if ((taskType == TaskClassifier.TaskType.CODE_GENERATION || 
+                 taskType == TaskClassifier.TaskType.ARCHITECTURE_DESIGN || 
+                 taskType == TaskClassifier.TaskType.RESEARCH) && 
+                plan.getMaxAnswerTokens() >= 6000) {
+                isLargeFreeform = true;
+            }
+        }
+
+        if (isLargeFreeform) {
+            String text;
+            if (model != null && model.toLowerCase().startsWith("gemini")) {
+                text = geminiHttpClient.executeTextCall(model, sysPrompt, userPrompt, temperature);
+            } else if (model != null && model.toLowerCase().startsWith("claude")) {
+                text = claudeHttpClient.executeTextCall(model, sysPrompt, userPrompt, temperature);
+            } else {
+                text = openAiHttpClient.executeTextCall(model, sysPrompt, userPrompt, temperature);
+            }
+            System.out.println("<<<<<<<<<<<<<<<<<<<<DERIVED OUTPUT (TEXT MODE)>>>>>>>>>>>>>>>>>>>>>>>>>> \n\n\n\n");
+            return responseFromText(text);
+        }
 
         String rawJson;
         if (model != null && model.toLowerCase().startsWith("gemini")) {
@@ -71,6 +96,14 @@ public class MiniAgentWorker {
         }
         System.out.println("<<<<<<<<<<<<<<<<<<<<DERIVED OUTPUT>>>>>>>>>>>>>>>>>>>>>>>>>> \n\n\n\n");
         return parseToStructuredResult(rawJson);
+    }
+
+    private StructuredResponse responseFromText(String text) {
+        StructuredResponse response = new StructuredResponse();
+        response.setThought_process("Bypassed structured JSON mode for large code/text generation to prevent timeouts.");
+        response.setSummary(text);
+        response.setRaw(text);
+        return response;
     }
 
     /**

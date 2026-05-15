@@ -125,7 +125,8 @@ public class SafeThoughtExecutor {
                                                 dataset == null ? Collections.emptyMap() : dataset,
                                                 liveInjections == null ? Collections.emptyList() : liveInjections,
                                                 history == null ? Collections.emptyList() : history,
-                                                temperature),
+                                                temperature,
+                                                plan),
                                 (model, response) -> validateStructuredResponse(
                                                 "generation",
                                                 model,

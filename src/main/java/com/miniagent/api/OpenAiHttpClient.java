@@ -917,11 +917,11 @@ public class OpenAiHttpClient {
 
     private Duration resolveRequestTimeout(String activeModel) {
         if (shouldUseResponsesApi(activeModel)) {
-            return Duration.ofMinutes(2);
+            return Duration.ofMinutes(3);
         }
 
         if (isReasoningCapableModel(activeModel)) {
-            return Duration.ofMinutes(2);
+            return Duration.ofMinutes(3);
         }
 
         return Duration.ofSeconds(30);
