@@ -56,7 +56,7 @@ public class TaskClassifier {
     private static final int MAX_REASON_CHARS = 240;
 
     private static final int MIN_ANSWER_TOKENS = 500;
-    private static final int MAX_ONE_SHOT_ANSWER_TOKENS = 7000;
+    private static final int MAX_ONE_SHOT_ANSWER_TOKENS = 12_000;
 
     private static final int MIN_ATTEMPTS = 1;
     private static final int MAX_ATTEMPTS = 2;
@@ -65,6 +65,7 @@ public class TaskClassifier {
     private final GeminiHttpClient geminiClient;
     private final ClaudeHttpClient claudeClient;
     private final ObjectMapper mapper;
+    private final TokenCountJudge tokenCountJudge;
 
     private final String openAiClassifierModel;
     private final String geminiClassifierModel;
@@ -115,6 +116,8 @@ public class TaskClassifier {
         this.openAiClassifierModel = cleanModel(openAiClassifierModel, DEFAULT_OPENAI_CLASSIFIER_MODEL);
         this.geminiClassifierModel = cleanModel(geminiClassifierModel, DEFAULT_GEMINI_CLASSIFIER_MODEL);
         this.claudeClassifierModel = cleanModel(claudeClassifierModel, DEFAULT_CLAUDE_CLASSIFIER_MODEL);
+
+        this.tokenCountJudge = new TokenCountJudge(this.openAiClient, this.mapper);
     }
 
     /**
@@ -237,14 +240,16 @@ public class TaskClassifier {
                 - Integer only.
                 - This is the one-shot final-answer budget, not the context window.
                 - Minimum 500.
-                - Maximum 7000.
+                - Maximum 12000.
                 - EASY short non-code: 500 to 1500.
                 - MEDIUM non-code: 1500 to 3500.
                 - HARD non-code: 3500 to 6000.
                 - EASY code: 2000 to 3500.
                 - MEDIUM code/debugging: 3500 to 5500.
-                - HARD complete code/debugging: 5500 to 7000.
-                - Huge app/full frontend/full IDE-like tasks: 6500 to 7000.
+                - For HARD complete code/debugging tasks: use 8500 to 12000.
+                - For very large complete app/frontend/backend generation: use 9000 to 12000.
+                - Never return above 12000.
+                - Runtime may retry incomplete generations up to 14000.
                 - Do not use tiny budgets for complete-code requests.
                 - Do not use huge budgets for simple Q&A.
 
@@ -346,7 +351,7 @@ public class TaskClassifier {
             reason = "Classified by " + providerUsed + ".";
         }
 
-        return new TaskClassification(
+        TaskClassification normalized = new TaskClassification(
                 taskType,
                 difficulty,
                 needsDeepReasoning,
@@ -360,6 +365,15 @@ public class TaskClassifier {
                 maxAnswerTokens,
                 trimReason(reason),
                 providerUsed.name());
+
+        TokenCountJudge.TokenBudgetDecision tokenDecision =
+                tokenCountJudge.judge(normalizedTask, normalized);
+
+        normalized.maxAnswerTokens = tokenDecision.getStartingMaxOutputTokens();
+        normalized.reason = normalized.reason + " TokenBudget=" + tokenDecision.getStartingMaxOutputTokens()
+                + " via " + tokenDecision.getSource();
+
+        return normalized;
     }
 
     /** Sanitizes attempt count so runtime does not become an uncontrolled loop. */

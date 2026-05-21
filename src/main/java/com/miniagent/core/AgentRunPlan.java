@@ -62,7 +62,7 @@ public class AgentRunPlan {
      * this cap.
      */
     private static final int MIN_ANSWER_TOKENS = 500;
-    private static final int MAX_ONE_SHOT_ANSWER_TOKENS = 7000;
+    private static final int MAX_ONE_SHOT_ANSWER_TOKENS = 14_000;
 
     /**
      * Attempt limits for the current commercial pipeline.

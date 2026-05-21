@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.miniagent.api.ClaudeHttpClient;
 import com.miniagent.api.GeminiHttpClient;
 import com.miniagent.api.OpenAiHttpClient;
+import com.miniagent.api.ModelOutputIncompleteException;
 import com.miniagent.model.StructuredResponse;
 import com.miniagent.prompt.PromptFactory;
 
@@ -78,7 +79,8 @@ public class MiniAgentWorker {
      * silently running for 3-5 minutes before anything else in the agent pipeline
      * even begins.
      */
-    private static final int DEFAULT_FREEFORM_DRAFT_TOKENS = 6500;
+    private static final int DEFAULT_FREEFORM_DRAFT_TOKENS = 9_000;
+    private static final int MAX_FREEFORM_DRAFT_TOKENS = 14_000;
     private static final int DEFAULT_FREEFORM_REPAIR_TOKENS = 4500;
     private static final int DEFAULT_STRUCTURED_TOKENS = 1200;
 
@@ -175,7 +177,7 @@ public class MiniAgentWorker {
                     ? plan.getMaxAnswerTokens()
                     : DEFAULT_FREEFORM_DRAFT_TOKENS;
 
-            String text = executeTextCallForModel(
+            String text = executeFreeformDraftWithTokenRamp(
                     model,
                     sysPrompt,
                     userPrompt,
@@ -364,6 +366,114 @@ public class MiniAgentWorker {
                 temperature,
                 maxOutputTokens,
                 timeout);
+    }
+
+    /**
+     * Generates freeform text with a controlled token-ramp retry.
+     *
+     * This method is intentionally used only for freeform worker output. It handles
+     * the common large-code case where the provider returns a real partial file but
+     * marks the response incomplete because max_output_tokens was reached.
+     *
+     * The retry is not a new agent attempt. It is the same generation stage retried
+     * with a larger output budget. That keeps StopPolicy and maxAttempts stable.
+     */
+    private String executeFreeformDraftWithTokenRamp(
+            String model,
+            String sysPrompt,
+            String userPrompt,
+            Double temperature,
+            int startingMaxOutputTokens,
+            Duration baseTimeout
+    ) {
+        int first = clampTokenBudget(startingMaxOutputTokens);
+        int second = Math.max(first + 3000, 12000);
+        int third = MAX_FREEFORM_DRAFT_TOKENS;
+
+        int[] budgets = uniqueBudgets(first, second, third);
+
+        ModelOutputIncompleteException lastIncomplete = null;
+
+        for (int budget : budgets) {
+            try {
+                Duration timeout = timeoutForFreeformBudget(budget, baseTimeout);
+
+                System.out.println(
+                        "[MINIAGENT-WORKER] Freeform generation attempt. " +
+                                "model=" + safeModel(model) +
+                                ", maxOutputTokens=" + budget +
+                                ", timeoutSeconds=" + timeout.toSeconds()
+                );
+
+                return executeTextCallForModel(
+                        model,
+                        sysPrompt,
+                        userPrompt,
+                        temperature,
+                        budget,
+                        timeout
+                );
+            } catch (ModelOutputIncompleteException incomplete) {
+                lastIncomplete = incomplete;
+
+                if (!incomplete.isMaxOutputTokenExhaustion()) {
+                    throw incomplete;
+                }
+
+                System.out.println(
+                        "[MINIAGENT-WORKER] Provider returned incomplete output due to token cap. " +
+                                "Retrying with larger budget if available. " +
+                                "model=" + safeModel(model) +
+                                ", previousBudget=" + budget +
+                                ", partialChars=" + incomplete.getPartialText().length() +
+                                ", outputTokens=" + incomplete.getOutputTokens() +
+                                ", reasoningTokens=" + incomplete.getReasoningTokens()
+                );
+            }
+        }
+
+        if (lastIncomplete != null) {
+            throw lastIncomplete;
+        }
+
+        throw new IllegalStateException("Freeform generation failed before producing a response.");
+    }
+
+    private int clampTokenBudget(int value) {
+        if (value <= 0) {
+            return DEFAULT_FREEFORM_DRAFT_TOKENS;
+        }
+
+        return Math.max(1000, Math.min(MAX_FREEFORM_DRAFT_TOKENS, value));
+    }
+
+    private int[] uniqueBudgets(int... values) {
+        java.util.LinkedHashSet<Integer> unique = new java.util.LinkedHashSet<>();
+
+        for (int value : values) {
+            unique.add(clampTokenBudget(value));
+        }
+
+        int[] result = new int[unique.size()];
+        int index = 0;
+
+        for (Integer value : unique) {
+            result[index++] = value;
+        }
+
+        return result;
+    }
+
+    private Duration timeoutForFreeformBudget(int budget, Duration baseTimeout) {
+        if (budget <= 9000) {
+            return baseTimeout == null ? Duration.ofSeconds(145) : baseTimeout;
+        }
+
+        if (budget <= 12000) {
+            return Duration.ofSeconds(180);
+        }
+
+        return Duration.ofSeconds(220);
     }
 
     /**

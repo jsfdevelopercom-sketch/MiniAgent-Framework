@@ -3,6 +3,7 @@ package com.miniagent.api;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.miniagent.config.AgentConfig;
+import com.miniagent.api.ModelOutputIncompleteException;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -55,7 +56,7 @@ public class OpenAiHttpClient {
     private static final String RESPONSES_ENDPOINT = "https://api.openai.com/v1/responses";
     private static final String CHAT_COMPLETIONS_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 
-    private static final int DEFAULT_TEXT_MAX_OUTPUT_TOKENS = 6500;
+    private static final int DEFAULT_TEXT_MAX_OUTPUT_TOKENS = 9_000;
     private static final int DEFAULT_STRUCTURED_MAX_OUTPUT_TOKENS = 1200;
 
     private static final Duration DEFAULT_TEXT_TIMEOUT = Duration.ofSeconds(115);
@@ -63,7 +64,7 @@ public class OpenAiHttpClient {
     private static final Duration DEFAULT_FAST_TIMEOUT = Duration.ofSeconds(30);
 
     private static final int MIN_OUTPUT_TOKENS = 256;
-    private static final int MAX_ONE_SHOT_OUTPUT_TOKENS = 7000;
+    private static final int MAX_ONE_SHOT_OUTPUT_TOKENS = 14_000;
     private static final int MAX_STRUCTURED_OUTPUT_TOKENS = 3000;
 
     private static final String RESPONSES_TEXT_REASONING_EFFORT = "minimal";
@@ -277,7 +278,9 @@ public class OpenAiHttpClient {
                         + response.body());
             }
 
-            return extractResponsesText(response.body(), activeModel);
+            return extractResponsesText(response.body(), activeModel, maxOutputTokens);
+        } catch (ModelOutputIncompleteException incomplete) {
+            throw incomplete;
         } catch (Exception e) {
             throw new RuntimeException("Failed to invoke OpenAI Responses text call. Reason: "
                     + e.getMessage(), e);
@@ -350,7 +353,9 @@ public class OpenAiHttpClient {
                         + response.body());
             }
 
-            return stripMarkdownCodeFence(extractResponsesText(response.body(), activeModel)).trim();
+            return stripMarkdownCodeFence(extractResponsesText(response.body(), activeModel, maxOutputTokens)).trim();
+        } catch (ModelOutputIncompleteException incomplete) {
+            throw incomplete;
         } catch (Exception e) {
             throw new RuntimeException("Failed to invoke OpenAI Responses structured call. Reason: "
                     + e.getMessage(), e);
@@ -393,7 +398,9 @@ public class OpenAiHttpClient {
                         + response.body());
             }
 
-            return extractChatCompletionText(response.body(), activeModel);
+            return extractChatCompletionText(response.body(), activeModel, maxCompletionTokens);
+        } catch (ModelOutputIncompleteException incomplete) {
+            throw incomplete;
         } catch (Exception e) {
             throw new RuntimeException("Failed to invoke OpenAI Chat text call. Reason: "
                     + e.getMessage(), e);
@@ -440,7 +447,9 @@ public class OpenAiHttpClient {
                         + response.body());
             }
 
-            return stripMarkdownCodeFence(extractChatCompletionText(response.body(), activeModel)).trim();
+            return stripMarkdownCodeFence(extractChatCompletionText(response.body(), activeModel, maxCompletionTokens)).trim();
+        } catch (ModelOutputIncompleteException incomplete) {
+            throw incomplete;
         } catch (Exception e) {
             throw new RuntimeException("Failed to invoke OpenAI Chat structured call. Reason: "
                     + e.getMessage(), e);
@@ -740,14 +749,28 @@ public class OpenAiHttpClient {
     }
 
     /** Extracts visible text from a Responses API response. */
-    private String extractResponsesText(String responseBody, String activeModel) throws Exception {
+    private String extractResponsesText(String responseBody, String activeModel, int requestedMaxOutputTokens) throws Exception {
         JsonNode root = mapper.readTree(responseBody);
         String status = root.path("status").asText("");
+        String incompleteReason = root.path("incomplete_details").path("reason").asText("");
+
+        int outputTokens = root.path("usage").path("output_tokens").asInt(-1);
+        int reasoningTokens = root.path("usage")
+                .path("output_tokens_details")
+                .path("reasoning_tokens")
+                .asInt(-1);
 
         JsonNode directOutputText = root.get("output_text");
         if (directOutputText != null && !directOutputText.isNull()) {
             String text = directOutputText.asText("");
             if (!text.isBlank()) {
+                if ("incomplete".equalsIgnoreCase(status)
+                        && ("max_output_tokens".equalsIgnoreCase(incompleteReason)
+                        || "max_tokens".equalsIgnoreCase(incompleteReason))) {
+                    throw new ModelOutputIncompleteException(
+                            activeModel, incompleteReason, text,
+                            requestedMaxOutputTokens, outputTokens, reasoningTokens);
+                }
                 return text;
             }
         }
@@ -790,6 +813,21 @@ public class OpenAiHttpClient {
         }
 
         String result = visibleText.toString().trim();
+        
+        if ("incomplete".equalsIgnoreCase(status)
+                && ("max_output_tokens".equalsIgnoreCase(incompleteReason)
+                || "max_tokens".equalsIgnoreCase(incompleteReason))) {
+
+            throw new ModelOutputIncompleteException(
+                    activeModel,
+                    incompleteReason,
+                    result,
+                    requestedMaxOutputTokens,
+                    outputTokens,
+                    reasoningTokens
+            );
+        }
+
         if (!result.isBlank()) {
             return result;
         }
@@ -826,7 +864,7 @@ public class OpenAiHttpClient {
     }
 
     /** Extracts visible content from a Chat Completions response. */
-    private String extractChatCompletionText(String responseBody, String activeModel) throws Exception {
+    private String extractChatCompletionText(String responseBody, String activeModel, int requestedMaxCompletionTokens) throws Exception {
         JsonNode root = mapper.readTree(responseBody);
         JsonNode choice = root.path("choices").path(0);
 
@@ -836,13 +874,25 @@ public class OpenAiHttpClient {
 
         String finishReason = choice.path("finish_reason").asText("");
         String content = choice.path("message").path("content").asText("");
+        
+        int completionTokens = root.path("usage").path("completion_tokens").asInt(-1);
+        int reasoningTokens = root.path("usage").path("completion_tokens_details").path("reasoning_tokens").asInt(-1);
+
+        if ("length".equalsIgnoreCase(finishReason) || "max_tokens".equalsIgnoreCase(finishReason)) {
+             throw new ModelOutputIncompleteException(
+                    activeModel,
+                    "max_tokens",
+                    content == null ? "" : content,
+                    requestedMaxCompletionTokens,
+                    completionTokens,
+                    reasoningTokens
+            );
+        }
 
         if (content != null && !content.isBlank()) {
             return content;
         }
 
-        int completionTokens = root.path("usage").path("completion_tokens").asInt(-1);
-        int reasoningTokens = root.path("usage").path("completion_tokens_details").path("reasoning_tokens").asInt(-1);
 
         StringBuilder error = new StringBuilder();
         error.append("OpenAI Chat Completions returned empty message content. model=").append(activeModel).append('.');
