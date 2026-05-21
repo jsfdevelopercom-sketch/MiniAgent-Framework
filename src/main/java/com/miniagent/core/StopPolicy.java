@@ -133,7 +133,7 @@ public class StopPolicy {
         Duration maxWallClock = plan.getMaxWallClockTime();
 
         if (maxWallClock == null || maxWallClock.isZero() || maxWallClock.isNegative()) {
-            return Duration.ofSeconds(285);
+            return Duration.ofMinutes(20);
         }
 
         return maxWallClock;

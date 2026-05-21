@@ -46,10 +46,10 @@ public class AgentRunPlan {
      * fail safely
      * within a few minutes, not silently run for ten minutes.
      */
-    private static final Duration SIMPLE_WALL_CLOCK = Duration.ofSeconds(90);
-    private static final Duration MEDIUM_WALL_CLOCK = Duration.ofSeconds(180);
-    private static final Duration HARD_WALL_CLOCK = Duration.ofSeconds(285);
-    private static final Duration TOOL_WALL_CLOCK = Duration.ofSeconds(285);
+    private static final Duration SIMPLE_WALL_CLOCK = Duration.ofMinutes(5);
+    private static final Duration MEDIUM_WALL_CLOCK = Duration.ofMinutes(10);
+    private static final Duration HARD_WALL_CLOCK = Duration.ofMinutes(20);
+    private static final Duration TOOL_WALL_CLOCK = Duration.ofMinutes(20);
 
     /**
      * One-shot answer budget limits.
