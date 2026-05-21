@@ -20,6 +20,12 @@ public class TokenCostManager {
 
     private static final double USD_TO_INR = 83.5;
 
+    private boolean ignoreCost = true;
+
+    public void setIgnoreCost(boolean ignoreCost) {
+        this.ignoreCost = ignoreCost;
+    }
+
     public static class UsageSnapshot {
         private final int inputTokens;
         private final int outputTokens;
@@ -156,7 +162,15 @@ public class TokenCostManager {
     }
 
     public boolean isQuotaExceeded(String userId) {
-        return getCostInInr(userId) >= 10.0;
+        double cost = getCostInInr(userId);
+        if (cost >= 10.0) {
+            if (ignoreCost) {
+                System.err.println("[WARNING] Token cost quota exceeded (Cost: " + cost + " INR). ignoreCost is true, so continuing execution.");
+                return false;
+            }
+            return true;
+        }
+        return false;
     }
 
     // Deprecated global hooks for legacy fallback
