@@ -514,7 +514,7 @@ public class SafeThoughtExecutor {
 
                 if (plan != null && plan.shouldUseFreeformWorkerOutput()) {
                         if ("generation".equals(stage) || "repair".equals(stage)) {
-                                maxCandidates = 1;
+                                maxCandidates = 2;
                         } else if ("evaluation".equals(stage)) {
                                 maxCandidates = 2;
                         }

@@ -67,7 +67,7 @@ public class OpenAiHttpClient {
     private static final int MAX_ONE_SHOT_OUTPUT_TOKENS = 14_000;
     private static final int MAX_STRUCTURED_OUTPUT_TOKENS = 3000;
 
-    private static final String RESPONSES_TEXT_REASONING_EFFORT = "minimal";
+    private static final String RESPONSES_TEXT_REASONING_EFFORT = "low";
     private static final String RESPONSES_TEXT_REASONING_FALLBACK_EFFORT = "low";
     private static final String STRUCTURED_REASONING_EFFORT = "low";
     private static final String CHAT_REASONING_EFFORT = "low";
