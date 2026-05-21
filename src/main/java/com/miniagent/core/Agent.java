@@ -563,8 +563,10 @@ public class Agent {
 
                 if (classification.recommendedPipeline == TaskClassifier.RecommendedPipeline.ASK_USER_CLARIFICATION) {
                     System.out.println("USER CLARIFICATION NEEDED");
-                    StructuredResponse clarify = StructuredResponse.fromSummary(
-                            "I need one or two more details before I can safely complete this task.");
+                    String clarificationMsg = (classification.reason != null && !classification.reason.isBlank())
+                            ? classification.reason
+                            : "I need one or two more details before I can safely complete this task.";
+                    StructuredResponse clarify = StructuredResponse.fromSummary(clarificationMsg);
                     clarify.setThought_process("TaskClassifier routed the request to ASK_USER_CLARIFICATION.");
                     clarify.setRaw("ASK_USER_CLARIFICATION");
 
