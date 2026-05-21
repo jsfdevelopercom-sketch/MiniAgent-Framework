@@ -240,7 +240,8 @@ public class DraftSanityValidator {
         String task = safeLower(context.getOriginalTask());
         String output = safeLower(summary);
 
-        boolean codeTask = taskType.contains("code") ||
+        boolean codeTask = context.isCodeSanityEnabled() ||
+                taskType.contains("code") ||
                 task.contains("java") ||
                 task.contains("spring") ||
                 task.contains("class") ||
@@ -325,16 +326,37 @@ public class DraftSanityValidator {
         }
     }
 
+    /**
+     * Performs length sanity checks without sabotaging large code/freeform output.
+     *
+     * The validator is called through DraftSanityContext, whose fourth argument is
+     * now expected complexity, not a hard max summary length. Older code used that
+     * integer as maxSummaryCharacters, which accidentally made a complexity score
+     * like 8 mean "summary longer than 8 characters is too long". That caused
+     * perfectly valid large code to be marked as too long.
+     *
+     * A hard length limit is still supported through setMaxSummaryCharacters(...)
+     * for future UI-specific summaries, but normal worker answers should not have
+     * one. Large/code tasks are allowed to be long by design.
+     */
     private void validateLength(
             String summary,
             DraftSanityContext context,
             DraftSanityResult result) {
-        if (summary == null) {
+        if (summary == null || context == null) {
             return;
         }
 
         int maxChars = context.getMaxSummaryCharacters();
-        if (maxChars > 0 && summary.length() > maxChars) {
+        if (maxChars <= 0) {
+            return;
+        }
+
+        if (context.isCodeSanityEnabled() || context.getExpectedComplexity() >= 7) {
+            return;
+        }
+
+        if (summary.length() > maxChars) {
             result.addMinor(
                     "SUMMARY_TOO_LONG",
                     "Summary exceeds configured maximum length.",
@@ -487,26 +509,83 @@ public class DraftSanityValidator {
         return value == null ? "" : value.toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Immutable-ish context object used by deterministic validation.
+     *
+     * The validator deliberately accepts a small context object instead of the
+     * whole AgentRunPlan. That keeps this class reusable and prevents it from
+     * growing into another orchestration layer. The context tells the validator
+     * enough to know whether code checks should run, whether tool execution claims
+     * are allowed, and how strict the output should be.
+     */
     public static class DraftSanityContext {
 
         private String originalTask = "";
         private String taskType = "";
+        private boolean codeSanityEnabled;
         private boolean toolExecutionAllowed;
+        private int expectedComplexity;
         private int maxSummaryCharacters;
 
+        /**
+         * Creates a blank low-strictness context.
+         *
+         * This is used when older callers invoke the validator without plan
+         * information. The validator still catches empty output and obvious raw
+         * JSON leaks, but it avoids task-specific overreach.
+         */
         public static DraftSanityContext empty() {
             return new DraftSanityContext();
         }
 
+        /**
+         * Builds the normal validator context used by SafeThoughtExecutor.
+         *
+         * Parameter meaning is intentionally aligned with SafeThoughtExecutor:
+         * - originalTask: the user task or repair context being checked
+         * - taskType: a compact stage/task/difficulty/pipeline label
+         * - codeSanityEnabled: whether code-specific checks should be active
+         * - expectedComplexity: 0-10 rough strictness derived from AgentRunPlan
+         *
+         * Tool execution permission is inferred from the task label. This prevents
+         * the old bug where the third boolean was treated as tool permission even
+         * though the caller was actually passing "code sanity enabled".
+         */
         public static DraftSanityContext of(
                 String originalTask,
                 String taskType,
+                boolean codeSanityEnabled,
+                int expectedComplexity) {
+            DraftSanityContext context = new DraftSanityContext();
+            context.setOriginalTask(originalTask);
+            context.setTaskType(taskType);
+            context.setCodeSanityEnabled(codeSanityEnabled);
+            context.setExpectedComplexity(expectedComplexity);
+            context.setToolExecutionAllowed(inferToolExecutionAllowed(taskType));
+            context.setMaxSummaryCharacters(0);
+            return context;
+        }
+
+        /**
+         * Creates a context when a future caller explicitly knows tool permission.
+         *
+         * This overload is not required by the current flow, but it prevents the
+         * class from needing another breaking API change when tool-backed drafting
+         * starts passing true execution state into deterministic validation.
+         */
+        public static DraftSanityContext of(
+                String originalTask,
+                String taskType,
+                boolean codeSanityEnabled,
                 boolean toolExecutionAllowed,
+                int expectedComplexity,
                 int maxSummaryCharacters) {
             DraftSanityContext context = new DraftSanityContext();
             context.setOriginalTask(originalTask);
             context.setTaskType(taskType);
+            context.setCodeSanityEnabled(codeSanityEnabled);
             context.setToolExecutionAllowed(toolExecutionAllowed);
+            context.setExpectedComplexity(expectedComplexity);
             context.setMaxSummaryCharacters(maxSummaryCharacters);
             return context;
         }
@@ -527,6 +606,14 @@ public class DraftSanityValidator {
             this.taskType = taskType == null ? "" : taskType;
         }
 
+        public boolean isCodeSanityEnabled() {
+            return codeSanityEnabled;
+        }
+
+        public void setCodeSanityEnabled(boolean codeSanityEnabled) {
+            this.codeSanityEnabled = codeSanityEnabled;
+        }
+
         public boolean isToolExecutionAllowed() {
             return toolExecutionAllowed;
         }
@@ -535,12 +622,33 @@ public class DraftSanityValidator {
             this.toolExecutionAllowed = toolExecutionAllowed;
         }
 
+        public int getExpectedComplexity() {
+            return expectedComplexity;
+        }
+
+        public void setExpectedComplexity(int expectedComplexity) {
+            this.expectedComplexity = Math.max(0, Math.min(10, expectedComplexity));
+        }
+
         public int getMaxSummaryCharacters() {
             return maxSummaryCharacters;
         }
 
         public void setMaxSummaryCharacters(int maxSummaryCharacters) {
             this.maxSummaryCharacters = Math.max(0, maxSummaryCharacters);
+        }
+
+        private static boolean inferToolExecutionAllowed(String taskType) {
+            if (taskType == null || taskType.isBlank()) {
+                return false;
+            }
+
+            String lower = taskType.toLowerCase(Locale.ROOT);
+
+            return lower.contains("tool_agent")
+                    || lower.contains("tool_required")
+                    || lower.contains("needs_tools")
+                    || lower.contains("tool/");
         }
     }
 

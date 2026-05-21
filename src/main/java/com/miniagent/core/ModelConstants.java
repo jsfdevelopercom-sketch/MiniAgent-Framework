@@ -1,17 +1,30 @@
 package com.miniagent.core;
 
+import java.util.Locale;
+import java.util.Set;
+
 /**
- * ModelConstants serves as the centralized repository for all AI model names
- * used throughout the MiniAgent framework. This ensures consistency and makes
- * it easier to update or add new models in the future.
+ * ModelConstants is the central registry of model names used by MiniAgent.
+ *
+ * Keep model strings here instead of scattering provider IDs across workers,
+ * routers, evaluators, and config classes. A typo in a model name is otherwise
+ * painful to debug because it appears as a provider HTTP failure much later in
+ * the control flow.
+ *
+ * This class intentionally has no mutable state.
  */
 public final class ModelConstants {
 
+    /**
+     * Private constructor because this is a constants/helper class.
+     */
     private ModelConstants() {
-        // Prevent instantiation
+        throw new AssertionError("ModelConstants is a static utility class.");
     }
 
-    // --- OpenAI Models ---
+    /*
+     * OpenAI models.
+     */
     public static final String BABBAGE_002 = "babbage-002";
     public static final String CHATGPT_4O_LATEST = "chatgpt-4o-latest";
     public static final String CHATGPT_IMAGE_LATEST = "chatgpt-image-latest";
@@ -97,7 +110,9 @@ public final class ModelConstants {
     public static final String TTS_1_HD = "tts-1-hd";
     public static final String WHISPER_1 = "whisper-1";
 
-    // --- Anthropic Claude Models ---
+    /*
+     * Anthropic Claude models.
+     */
     public static final String CLAUDE_HAIKU_4_5 = "claude-haiku-4-5-20251001";
     public static final String CLAUDE_OPUS_4_6 = "claude-opus-4-6";
     public static final String CLAUDE_SONNET_4_6 = "claude-sonnet-4-6";
@@ -105,7 +120,9 @@ public final class ModelConstants {
     public static final String CLAUDE_3_5_HAIKU = "claude-3-5-haiku";
     public static final String CLAUDE_3_OPUS = "claude-3-opus";
 
-    // --- Google Gemini Models ---
+    /*
+     * Google Gemini models.
+     */
     public static final String GEMINI_3_1_PRO_PREVIEW = "gemini-3.1-pro-preview";
     public static final String GEMINI_3_FLASH_PREVIEW = "gemini-3-flash-preview";
     public static final String GEMINI_3_1_FLASH_LITE_PREVIEW = "gemini-3.1-flash-lite-preview";
@@ -123,29 +140,119 @@ public final class ModelConstants {
     public static final String GEMINI_1_5_FLASH = "gemini-1.5-flash";
     public static final String GEMINI_1_5_PRO = "gemini-1.5-pro";
 
-    // --- Model Classifications (Tags) ---
-    // High thinking, low speed
-    public static final java.util.Set<String> HIGH_THINKING_MODELS = java.util.Set.of(
-        GPT_5_5_PRO, GPT_5_4_PRO, O1_PRO, O3_PRO, GPT_5_PRO
-    );
+    /*
+     * Model grouping used by routers and clients.
+     */
+    public static final Set<String> HIGH_THINKING_MODELS = Set.of(
+            GPT_5_5_PRO,
+            GPT_5_4_PRO,
+            O1_PRO,
+            O3_PRO,
+            GPT_5_PRO);
 
-    // Medium thinking, medium/fast speed
-    public static final java.util.Set<String> MEDIUM_THINKING_MODELS = java.util.Set.of(
-        GPT_5_5, GPT_5_4, O1, O3, GPT_5, O1_PREVIEW
-    );
+    public static final Set<String> MEDIUM_THINKING_MODELS = Set.of(
+            GPT_5_5,
+            GPT_5_4,
+            O1,
+            O3,
+            GPT_5,
+            O1_PREVIEW);
 
-    // Very fast speed, low thinking, cheap
-    public static final java.util.Set<String> FAST_LOW_THINKING_MODELS = java.util.Set.of(
-        GPT_5_4_MINI, GPT_5_4_NANO, GPT_5_MINI, GPT_5_NANO, O1_MINI, O3_MINI, O4_MINI, GPT_4O_MINI, GEMINI_2_5_FLASH, GEMINI_3_1_FLASH_LITE_PREVIEW, CLAUDE_HAIKU_4_5
-    );
+    public static final Set<String> FAST_LOW_THINKING_MODELS = Set.of(
+            GPT_5_4_MINI,
+            GPT_5_4_NANO,
+            GPT_5_MINI,
+            GPT_5_NANO,
+            O1_MINI,
+            O3_MINI,
+            O4_MINI,
+            GPT_4O_MINI,
+            GEMINI_2_5_FLASH,
+            GEMINI_3_1_FLASH_LITE_PREVIEW,
+            CLAUDE_HAIKU_4_5);
 
+    /**
+     * Returns true when the model should be treated as high-capability or costly.
+     *
+     * This method is intentionally heuristic. Stage-aware token/time budgets still
+     * live in AgentRunPlan and provider clients, not here.
+     */
     public static boolean isHighModel(String model) {
-        if (model == null) return false;
-        String lower = model.toLowerCase();
-        // Determine if it's a "high" or expensive model designed for heavy lifting
-        return lower.contains("pro") || lower.contains("opus") || lower.contains("sonnet") || 
-               lower.contains("gpt-4o") || lower.contains("gpt-5") || lower.contains("o1") || 
-               lower.contains("o3") || lower.contains("deep-research") || lower.contains("lyria");
+        if (model == null || model.isBlank()) {
+            return false;
+        }
+
+        String lower = model.toLowerCase(Locale.ROOT).trim();
+
+        return lower.contains("pro")
+                || lower.contains("opus")
+                || lower.contains("sonnet")
+                || lower.contains("gpt-4o")
+                || lower.contains("gpt-5")
+                || lower.startsWith("o1")
+                || lower.startsWith("o3")
+                || lower.startsWith("o4")
+                || lower.contains("deep-research")
+                || lower.contains("lyria");
     }
 
+    /**
+     * Returns true when the model name belongs to OpenAI.
+     */
+    public static boolean isOpenAiModel(String model) {
+        if (model == null || model.isBlank()) {
+            return false;
+        }
+
+        String lower = model.toLowerCase(Locale.ROOT).trim();
+
+        return lower.startsWith("gpt-")
+                || lower.startsWith("o1")
+                || lower.startsWith("o3")
+                || lower.startsWith("o4")
+                || lower.contains("deep-research");
+    }
+
+    /**
+     * Returns true when the model name belongs to Gemini.
+     */
+    public static boolean isGeminiModel(String model) {
+        return model != null && model.toLowerCase(Locale.ROOT).trim().startsWith("gemini");
+    }
+
+    /**
+     * Returns true when the model name belongs to Claude.
+     */
+    public static boolean isClaudeModel(String model) {
+        return model != null && model.toLowerCase(Locale.ROOT).trim().startsWith("claude");
+    }
+
+    /**
+     * Returns true when the model should be treated as a cheap/fast model.
+     */
+    public static boolean isFastLowThinkingModel(String model) {
+        if (model == null || model.isBlank()) {
+            return false;
+        }
+
+        return FAST_LOW_THINKING_MODELS.contains(model.trim());
+    }
+
+    /**
+     * Returns true for OpenAI reasoning-style models that often need Responses API
+     * and may reject custom temperature.
+     */
+    public static boolean isOpenAiReasoningFamily(String model) {
+        if (model == null || model.isBlank()) {
+            return false;
+        }
+
+        String lower = model.toLowerCase(Locale.ROOT).trim();
+
+        return lower.startsWith("gpt-5")
+                || lower.startsWith("o1")
+                || lower.startsWith("o3")
+                || lower.startsWith("o4")
+                || lower.contains("deep-research");
+    }
 }

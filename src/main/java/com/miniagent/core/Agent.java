@@ -47,6 +47,19 @@ public class Agent {
     private static final String FAST_RUN_ID_PREFIX = "fast-";
     private static final String DEEP_RUN_ID_PREFIX = "deep-";
 
+    /*
+     * Absolute deepThink ceiling.
+     *
+     * The individual provider calls are already bounded in OpenAiHttpClient and
+     * MiniAgentWorker. This timeout is the outer safety brake for the entire
+     * classifier -> route -> generate -> critic -> repair -> finalization run.
+     *
+     * Keep this slightly above AgentRunPlan's hard wall-clock target so the agent
+     * has a little room for Java bookkeeping and trace logging, but not enough to
+     * drift into an 8-10 minute commercial UX failure.
+     */
+    private static final int DEEP_THINK_ABSOLUTE_TIMEOUT_SECONDS = 295;
+
     private final MiniAgentWorker worker;
     private final MiniAgentEvaluator evaluator;
     private final TokenCostManager costManager;
@@ -145,6 +158,13 @@ public class Agent {
                 null);
     }
 
+    /**
+     * Legacy helper kept only for source compatibility while routing is migrated.
+     *
+     * Do not use this method to make runtime decisions. The current architecture
+     * deliberately avoids scattered prompt keyword checks. TaskClassifier and
+     * AgentRunPlan are the authoritative source for code/freeform decisions.
+     */
     private boolean isLargeCodeGenerationRequest(
             String userQuery,
             TaskClassifier.TaskClassification classification) {
@@ -767,7 +787,7 @@ public class Agent {
         });
 
         try {
-            StructuredResponse response = future.get(500, TimeUnit.SECONDS);
+            StructuredResponse response = future.get(DEEP_THINK_ABSOLUTE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             updateThought("DeepThink completed.");
             return response;
         } catch (TimeoutException e) {
@@ -1761,6 +1781,44 @@ public class Agent {
             partial.setThought_process("Hard stop with best available draft.");
             partial.setRaw(best.getRaw());
             return partial.normalize();
+        }
+
+        /*
+         * Large code/freeform answers should not be rewritten by the final
+         * synthesizer. At this point the worker has already generated the best
+         * available user-facing answer. A cheap formatting model can corrupt code,
+         * remove features, shrink an implementation, or reintroduce JSON wrappers.
+         *
+         * OutputSynthesizer has its own defensive bypass too, but doing the skip
+         * here avoids an unnecessary model call and makes the trace easier to read.
+         */
+        if (plan != null && plan.shouldSkipLargeAnswerSynthesis()) {
+            StructuredResponse direct = StructuredResponse.fromSummary(best.getSummary());
+            direct.setThought_process("Large answer synthesis skipped by AgentRunPlan.");
+            direct.setRaw(best.getRaw());
+            direct.setConvo(best.getConvo());
+            direct.setSpoken_summary(best.getSpoken_summary());
+            direct.putMeta("synthesisSkipped", true);
+            direct.putMeta("synthesisSkipReason", "agent_run_plan_large_answer");
+
+            if (decision.getAction() == StopPolicy.StopDecision.Action.PARTIAL_STOP) {
+                direct.setSummary(
+                        direct.getSummary() +
+                                "\n\n---\n\nNote: This is the best available result. Stop reason: " +
+                                decision.getReason());
+            }
+
+            traceLogger.stage(
+                    state.getRunId(),
+                    state.getUserId(),
+                    AgentTraceEventType.SYNTHESIS_FINISHED,
+                    "synthesis",
+                    "Final synthesis skipped for large/code answer.",
+                    mergeMaps(
+                            AgentTraceData.draft(direct, 1200),
+                            runCostMap(state.getRunId())));
+
+            return direct.normalize();
         }
 
         updateThought("Synthesizing best draft into final user-facing response...");

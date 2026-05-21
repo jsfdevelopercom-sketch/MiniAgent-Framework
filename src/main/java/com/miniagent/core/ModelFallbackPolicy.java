@@ -6,16 +6,20 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * ModelFallbackPolicy provides fallback model sequences per stage.
+ * ModelFallbackPolicy owns candidate model ordering for each MiniAgent stage.
  *
- * The first model is always the requested/preferred model.
- * Later models are ordered by how safe they are for that stage.
+ * This class does not decide how many candidates are actually attempted. That
+ * runtime fan-out is controlled by SafeThoughtExecutor using AgentRunPlan. This
+ * class simply returns an ordered list of sensible candidates for a stage.
  *
- * Important distinction:
- * - Normal fallbacks may include cheap models because many tasks only need
- * stable completion.
- * - Strong code fallbacks must not fall to nano-class models because code
- * repair/generation can otherwise shrink a production request into a toy demo.
+ * Important production rule:
+ * Strong code generation must not be demoted to nano/flash-lite merely because
+ * the first model failed. If a serious code generator fails,
+ * SafeThoughtExecutor
+ * should either stop within the budget or try another strong model. Cheap
+ * models
+ * belong in normal/simple paths and final formatting paths, not first-draft
+ * production code generation.
  */
 public class ModelFallbackPolicy {
 
@@ -27,11 +31,12 @@ public class ModelFallbackPolicy {
     private final String claudeReliable;
 
     /**
-     * Default production fallback policy.
+     * Creates the default production policy.
      *
-     * GPT-5.4 is treated as the reliable OpenAI workhorse.
-     * GPT-5 nano remains available for cheap non-code fallback paths only.
-     * Gemini Pro and Claude Sonnet are kept as strong cross-provider fallbacks.
+     * The defaults mirror ModelRouter:
+     * - GPT-5.4 is the reliable OpenAI heavy generator/repair model.
+     * - GPT-5 nano is cheap and used only where cheap fallback is appropriate.
+     * - Gemini Pro and Claude Sonnet are strong cross-provider fallbacks.
      */
     public ModelFallbackPolicy() {
         this(
@@ -44,10 +49,10 @@ public class ModelFallbackPolicy {
     }
 
     /**
-     * Backward-compatible constructor.
+     * Backward-compatible constructor for old integration code.
      *
-     * Existing callers that provide only cheap/reliable basics can continue
-     * compiling. Strong provider defaults are filled from ModelConstants.
+     * Older callers pass only four basic models. Strong Gemini/Claude defaults
+     * are filled from ModelConstants so the newer protected paths still work.
      */
     public ModelFallbackPolicy(
             String openAiReliable,
@@ -64,10 +69,10 @@ public class ModelFallbackPolicy {
     }
 
     /**
-     * Full constructor.
+     * Full constructor for tests or future configuration-driven routing.
      *
-     * This is useful for tests or future configuration-driven routing where
-     * reliable/cheap models may be injected from AgentConfig.
+     * All model names are cleaned once here so the stage methods can stay simple
+     * and deterministic.
      */
     public ModelFallbackPolicy(
             String openAiReliable,
@@ -85,49 +90,51 @@ public class ModelFallbackPolicy {
     }
 
     /**
-     * Normal generation fallbacks.
+     * Normal first-draft generation fallbacks.
      *
-     * This path is intentionally allowed to include cheap models. It is used for
-     * ordinary tasks where a smaller model can safely recover a provider failure.
-     * Serious code generation should use strongGenerationFallbacks(...) instead.
+     * Used for simple/medium tasks. Cheap models are allowed here because these
+     * tasks are not expected to produce production-grade code or large research.
      */
     public List<String> generationFallbacks(String preferredModel) {
         LinkedHashSet<String> models = new LinkedHashSet<>();
+
         addPreferred(models, preferredModel);
 
         String lower = lower(preferredModel);
 
         if (lower.startsWith("gemini")) {
-            models.add(openAiReliable);
-            models.add(openAiCheap);
-            models.add(geminiCheap);
+            add(models, geminiCheap);
+            add(models, openAiCheap);
+            add(models, claudeCheap);
         } else if (lower.startsWith("claude")) {
-            models.add(openAiReliable);
-            models.add(openAiCheap);
-            models.add(claudeCheap);
+            add(models, claudeCheap);
+            add(models, openAiCheap);
+            add(models, geminiCheap);
         } else {
-            models.add(openAiReliable);
-            models.add(openAiCheap);
-            models.add(geminiCheap);
+            add(models, openAiCheap);
+            add(models, geminiCheap);
+            add(models, claudeCheap);
         }
+
+        add(models, openAiReliable);
 
         return new ArrayList<>(models);
     }
 
     /**
-     * Strong generation fallbacks for high-effort code and architecture tasks.
+     * Strong first-draft generation fallbacks.
      *
-     * This list deliberately excludes GPT-5 nano and cheap flash-lite. If the
-     * preferred strong model fails, we should move to another strong model, not
-     * to a cheap summarizer-level model that may produce stubs.
+     * Used for hard code, architecture, research, and other protected tasks. The
+     * list deliberately contains strong models only. SafeThoughtExecutor may trim
+     * this to one candidate for commercial latency.
      */
     public List<String> strongGenerationFallbacks(String preferredModel) {
         LinkedHashSet<String> models = new LinkedHashSet<>();
-        addPreferred(models, preferredModel);
 
-        models.add(openAiReliable);
-        models.add(geminiReliable);
-        models.add(claudeReliable);
+        addPreferred(models, preferredModel);
+        add(models, openAiReliable);
+        add(models, claudeReliable);
+        add(models, geminiReliable);
 
         return new ArrayList<>(models);
     }
@@ -135,61 +142,63 @@ public class ModelFallbackPolicy {
     /**
      * Normal repair fallbacks.
      *
-     * This path remains cheap-capable for non-code tasks. For serious code
-     * repair, use strongRepairFallbacks(...).
+     * Repair for simple prose can be cheap. If the task is hard/code/freeform,
+     * SafeThoughtExecutor should call strongRepairFallbacks instead.
      */
     public List<String> repairFallbacks(String preferredModel) {
         LinkedHashSet<String> models = new LinkedHashSet<>();
-        addPreferred(models, preferredModel);
 
-        models.add(openAiReliable);
-        models.add(openAiCheap);
-        models.add(geminiCheap);
+        addPreferred(models, preferredModel);
+        add(models, openAiCheap);
+        add(models, geminiCheap);
+        add(models, claudeCheap);
+        add(models, openAiReliable);
 
         return new ArrayList<>(models);
     }
 
     /**
-     * Strong repair fallbacks for code.
+     * Strong repair fallbacks.
      *
-     * Code repair is not summarization. A nano-class model can easily collapse a
-     * production implementation into a small demo or damage syntax. Keep repair
-     * on strong models only.
+     * Code repair must preserve implementation detail. Avoid nano-class models
+     * because they tend to compress long code or convert it into explanations.
      */
     public List<String> strongRepairFallbacks(String preferredModel) {
         LinkedHashSet<String> models = new LinkedHashSet<>();
-        addPreferred(models, preferredModel);
 
-        models.add(openAiReliable);
-        models.add(geminiReliable);
-        models.add(claudeReliable);
+        addPreferred(models, preferredModel);
+        add(models, openAiReliable);
+        add(models, claudeReliable);
+        add(models, geminiReliable);
 
         return new ArrayList<>(models);
     }
 
     /**
-     * Critic fallbacks.
+     * Normal critic fallbacks.
      *
-     * Critic work may be cheaper than generation, but it still needs enough
-     * reliability to return structured evaluation. Claude Sonnet remains the
-     * preferred critic in routing; if unavailable, use cheap structured models.
+     * Critic output is structured and small, so cheaper models can be used for
+     * ordinary tasks. The critic must still be reliable enough to produce JSON.
      */
     public List<String> criticFallbacks(String preferredModel) {
         LinkedHashSet<String> models = new LinkedHashSet<>();
+
         addPreferred(models, preferredModel);
 
         String lower = lower(preferredModel);
 
         if (lower.startsWith("claude")) {
-            models.add(openAiCheap);
-            models.add(geminiCheap);
+            add(models, claudeCheap);
+            add(models, openAiCheap);
+            add(models, geminiCheap);
         } else if (lower.startsWith("gemini")) {
-            models.add(openAiCheap);
-            models.add(claudeCheap);
+            add(models, geminiCheap);
+            add(models, openAiCheap);
+            add(models, claudeCheap);
         } else {
-            models.add(openAiCheap);
-            models.add(geminiCheap);
-            models.add(claudeCheap);
+            add(models, openAiCheap);
+            add(models, geminiCheap);
+            add(models, claudeCheap);
         }
 
         return new ArrayList<>(models);
@@ -198,53 +207,82 @@ public class ModelFallbackPolicy {
     /**
      * Strong critic fallbacks.
      *
-     * Use this for hard code/architecture/research tasks when a failed critic
-     * should not cause fake 50/50 evaluation or low-confidence loops.
+     * Used when a bad critic can materially hurt the final answer. Claude Sonnet
+     * is intentionally early because it is often a strong evaluator, while GPT-5.4
+     * remains available if cross-provider critique fails.
      */
     public List<String> strongCriticFallbacks(String preferredModel) {
         LinkedHashSet<String> models = new LinkedHashSet<>();
-        addPreferred(models, preferredModel);
 
-        models.add(claudeReliable);
-        models.add(openAiReliable);
-        models.add(geminiReliable);
+        addPreferred(models, preferredModel);
+        add(models, claudeReliable);
+        add(models, openAiReliable);
+        add(models, geminiReliable);
 
         return new ArrayList<>(models);
     }
 
+    /**
+     * Returns the reliable OpenAI model configured for heavy paths.
+     */
     public String getOpenAiReliable() {
         return openAiReliable;
     }
 
+    /**
+     * Returns the cheap OpenAI model configured for normal/simple paths.
+     */
     public String getOpenAiCheap() {
         return openAiCheap;
     }
 
+    /**
+     * Returns the cheap Gemini model configured for normal/simple paths.
+     */
     public String getGeminiCheap() {
         return geminiCheap;
     }
 
+    /**
+     * Returns the cheap Claude model configured for normal/simple paths.
+     */
     public String getClaudeCheap() {
         return claudeCheap;
     }
 
+    /**
+     * Returns the reliable Gemini model configured for protected paths.
+     */
     public String getGeminiReliable() {
         return geminiReliable;
     }
 
+    /**
+     * Returns the reliable Claude model configured for protected paths.
+     */
     public String getClaudeReliable() {
         return claudeReliable;
     }
 
     /**
-     * Adds the preferred model as first candidate when it is not blank.
+     * Adds a preferred model as the first candidate when present.
      */
     private void addPreferred(LinkedHashSet<String> models, String preferred) {
-        if (models == null || preferred == null || preferred.isBlank()) {
+        add(models, preferred);
+    }
+
+    /**
+     * Adds a model to the ordered set, skipping blank values.
+     *
+     * LinkedHashSet is used so duplicates collapse while first-seen order remains
+     * stable for debugging.
+     */
+    private static void add(LinkedHashSet<String> models, String model) {
+        if (models == null || model == null || model.isBlank()) {
             return;
         }
 
-        models.add(preferred.trim());
+        models.add(model.trim());
     }
 
     /**
@@ -259,9 +297,9 @@ public class ModelFallbackPolicy {
     }
 
     /**
-     * Lowercases a nullable model string.
+     * Lowercases a nullable model string for provider-prefix checks.
      */
     private static String lower(String value) {
-        return value == null ? "" : value.toLowerCase(Locale.ROOT);
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 }

@@ -8,33 +8,55 @@ import com.miniagent.trace.AgentTraceLogger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
 /**
- * SafeThoughtExecutor wraps MiniAgentWorker and MiniAgentEvaluator calls with
- * reliable fallback, validation, and recovery-friendly failure records.
+ * SafeThoughtExecutor is the guarded execution layer around:
  *
- * Important architectural rule:
- * This class must NOT classify the user's task again.
+ * - MiniAgentWorker generation
+ * - MiniAgentWorker repair
+ * - MiniAgentEvaluator criticism/evaluation
  *
- * Task identity, difficulty, budget, pipeline, tool need, and depth are already
- * decided earlier by:
+ * This class is deliberately NOT a classifier.
  *
- * TaskClassifier -> ModelRouter -> AgentRunPlan
+ * The actual task identity is decided earlier by:
  *
- * SafeThoughtExecutor should only consume that decision. It should not run
- * keyword-based "serious code" detection or secretly override the classifier.
+ * TaskClassifier
+ * -> decides task type, difficulty, pipeline, maxAttempts, maxAnswerTokens
  *
- * Why this matters:
- * - Code is only one category of hard tasks.
- * - Medical reasoning, research, architecture, financial/legal reasoning,
- * summarization of large context, and tool-heavy tasks can require equal or
- * stronger fallback protection.
- * - Repeating classification inside this class creates contradictory behavior:
- * the classifier may say "HARD RESEARCH" but this class may treat it as normal
- * because it does not look like code.
+ * ModelRouter
+ * -> chooses generator, critic, repair, and synthesizer models
+ *
+ * AgentRunPlan
+ * -> freezes those decisions into one execution contract
+ *
+ * SafeThoughtExecutor only consumes that plan.
+ *
+ * Why this separation matters:
+ *
+ * Older MiniAgent code mixed policy in multiple places:
+ * - TaskClassifier said one thing.
+ * - AgentRunPlan changed attempts/tokens.
+ * - SafeThoughtExecutor re-detected "serious code" using keywords.
+ * - Worker sometimes used text calls with JSON prompts.
+ *
+ * That made the runtime unpredictable. A hard code task could become four long
+ * fallback attempts, then repair could fall back into structured JSON and undo
+ * the freeform fix.
+ *
+ * This class now keeps the pipeline coherent:
+ *
+ * - It never reclassifies the prompt.
+ * - It uses AgentRunPlan for fallback strength.
+ * - It passes AgentRunPlan into Worker generation and Worker repair.
+ * - It limits fallback model count for large freeform stages so one request
+ * does
+ * not silently become a 6-10 minute chain.
+ * - It treats "summary too long" as non-fatal for large code/freeform answers
+ * when the output is otherwise useful.
  */
 public class SafeThoughtExecutor {
 
@@ -44,12 +66,19 @@ public class SafeThoughtExecutor {
         private final AgentTraceLogger traceLogger;
         private final DraftSanityValidator draftSanityValidator;
 
+        /**
+         * Creates the guarded stage executor used by Agent.deepThink().
+         *
+         * The constructor is intentionally strict about Worker and Evaluator because
+         * those are mandatory execution dependencies. ModelFallbackPolicy and
+         * AgentTraceLogger can be replaced with defaults because they are support
+         * services rather than core execution engines.
+         */
         public SafeThoughtExecutor(
                         MiniAgentWorker worker,
                         MiniAgentEvaluator evaluator,
                         ModelFallbackPolicy fallbackPolicy,
                         AgentTraceLogger traceLogger) {
-
                 if (worker == null) {
                         throw new IllegalArgumentException("MiniAgentWorker cannot be null.");
                 }
@@ -66,19 +95,11 @@ public class SafeThoughtExecutor {
         }
 
         /**
-         * New preferred generation entry point.
+         * Preferred first-draft generation entry point.
          *
-         * The AgentRunPlan is the source of truth for:
-         * - task type
-         * - difficulty
-         * - deep reasoning need
-         * - tool/web/file need
-         * - pipeline
-         * - answer token budget
-         *
-         * This method uses those decisions to choose normal fallback or protected
-         * fallback. It does not inspect the prompt text to guess whether the task is
-         * "serious code".
+         * SafeThoughtExecutor does not decide whether the task is "serious code".
+         * It asks AgentRunPlan whether this is a protected/high-attention task and
+         * then chooses normal or strong fallback accordingly.
          */
         public ThoughtCallResult<StructuredResponse> generateDraft(
                         String runId,
@@ -92,12 +113,13 @@ public class SafeThoughtExecutor {
                         Double temperature,
                         int attemptNumber,
                         AgentRunPlan plan) {
-
                 boolean protectedQualityTask = shouldUseProtectedFallback(plan);
 
                 List<String> models = protectedQualityTask
                                 ? fallbackPolicy.strongGenerationFallbacks(preferredModel)
                                 : fallbackPolicy.generationFallbacks(preferredModel);
+
+                models = selectStageModelCandidates("generation", models, plan);
 
                 DraftSanityValidator.DraftSanityContext sanityContext = buildSanityContext(
                                 taskInstructions,
@@ -110,6 +132,7 @@ public class SafeThoughtExecutor {
                                 "generation",
                                 preferredModel,
                                 protectedQualityTask,
+                                models,
                                 plan);
 
                 return executeWithFallback(
@@ -132,15 +155,16 @@ public class SafeThoughtExecutor {
                                                 model,
                                                 attemptNumber,
                                                 response,
-                                                sanityContext));
+                                                sanityContext,
+                                                plan));
         }
 
         /**
-         * Backward-compatible overload.
+         * Backward-compatible generation overload.
          *
-         * Keep this so older callers still compile. It deliberately does not run any
-         * local keyword classifier. If the caller does not provide an AgentRunPlan,
-         * this executor uses the conservative normal fallback path.
+         * Older callers still compile. Without AgentRunPlan, this class intentionally
+         * uses conservative normal behavior instead of trying to guess task type from
+         * keywords.
          */
         public ThoughtCallResult<StructuredResponse> generateDraft(
                         String runId,
@@ -153,7 +177,6 @@ public class SafeThoughtExecutor {
                         List<Map<String, String>> history,
                         Double temperature,
                         int attemptNumber) {
-
                 return generateDraft(
                                 runId,
                                 userId,
@@ -169,11 +192,13 @@ public class SafeThoughtExecutor {
         }
 
         /**
-         * New preferred repair entry point.
+         * Preferred repair entry point.
          *
-         * Repair quality is also controlled by AgentRunPlan. A hard medical answer,
-         * a research answer, or a major architecture answer should not drop into weak
-         * fallback simply because it is not code.
+         * Critical coherence rule:
+         *
+         * If the first draft was a freeform/code answer, repair must stay freeform.
+         * Otherwise MiniAgent can generate a good direct code answer and then corrupt
+         * it by forcing the repair stage back into JSON.
          */
         public ThoughtCallResult<StructuredResponse> repairDraft(
                         String runId,
@@ -186,12 +211,13 @@ public class SafeThoughtExecutor {
                         Map<String, Object> dataset,
                         int attemptNumber,
                         AgentRunPlan plan) {
-
                 boolean protectedQualityTask = shouldUseProtectedFallback(plan);
 
                 List<String> models = protectedQualityTask
                                 ? fallbackPolicy.strongRepairFallbacks(preferredModel)
                                 : fallbackPolicy.repairFallbacks(preferredModel);
+
+                models = selectStageModelCandidates("repair", models, plan);
 
                 String repairContextText = buildRepairContextText(
                                 previousDraft,
@@ -211,6 +237,7 @@ public class SafeThoughtExecutor {
                                 "repair",
                                 preferredModel,
                                 protectedQualityTask,
+                                models,
                                 plan);
 
                 return executeWithFallback(
@@ -226,17 +253,20 @@ public class SafeThoughtExecutor {
                                                 structuralFixes == null ? Collections.emptyList() : structuralFixes,
                                                 missingInstructions == null ? Collections.emptyList()
                                                                 : missingInstructions,
-                                                dataset == null ? Collections.emptyMap() : dataset),
+                                                dataset == null ? Collections.emptyMap() : dataset,
+                                                null,
+                                                plan),
                                 (model, response) -> validateStructuredResponse(
                                                 "repair",
                                                 model,
                                                 attemptNumber,
                                                 response,
-                                                sanityContext));
+                                                sanityContext,
+                                                plan));
         }
 
         /**
-         * Backward-compatible overload.
+         * Backward-compatible repair overload.
          */
         public ThoughtCallResult<StructuredResponse> repairDraft(
                         String runId,
@@ -248,7 +278,6 @@ public class SafeThoughtExecutor {
                         List<String> missingInstructions,
                         Map<String, Object> dataset,
                         int attemptNumber) {
-
                 return repairDraft(
                                 runId,
                                 userId,
@@ -263,11 +292,11 @@ public class SafeThoughtExecutor {
         }
 
         /**
-         * New preferred evaluation entry point.
+         * Preferred evaluation entry point.
          *
-         * The critic fallback policy is also plan-driven. Hard research, medical,
-         * architecture, and tool-heavy answers need a strong critic as much as code
-         * does.
+         * Evaluation can still use a structured critic. The critic is supposed to
+         * return scores/fixes, not the full final code. The important thing here is
+         * that critic fallback strength is also plan-driven, not code-keyword driven.
          */
         public ThoughtCallResult<EvaluationResult> evaluateDraft(
                         String runId,
@@ -280,12 +309,13 @@ public class SafeThoughtExecutor {
                         List<Map<String, String>> history,
                         int attemptNumber,
                         AgentRunPlan plan) {
-
                 boolean protectedQualityTask = shouldUseProtectedFallback(plan);
 
                 List<String> models = protectedQualityTask
                                 ? fallbackPolicy.strongCriticFallbacks(preferredModel)
                                 : fallbackPolicy.criticFallbacks(preferredModel);
+
+                models = selectStageModelCandidates("evaluation", models, plan);
 
                 logPolicyDecision(
                                 runId,
@@ -293,6 +323,7 @@ public class SafeThoughtExecutor {
                                 "evaluation",
                                 preferredModel,
                                 protectedQualityTask,
+                                models,
                                 plan);
 
                 return executeWithFallback(
@@ -313,7 +344,7 @@ public class SafeThoughtExecutor {
         }
 
         /**
-         * Backward-compatible overload.
+         * Backward-compatible evaluation overload.
          */
         public ThoughtCallResult<EvaluationResult> evaluateDraft(
                         String runId,
@@ -325,7 +356,6 @@ public class SafeThoughtExecutor {
                         List<String> liveInjections,
                         List<Map<String, String>> history,
                         int attemptNumber) {
-
                 return evaluateDraft(
                                 runId,
                                 userId,
@@ -340,13 +370,11 @@ public class SafeThoughtExecutor {
         }
 
         /**
-         * Shared fallback execution loop.
+         * Shared fallback loop.
          *
-         * This method does not care why a model list was selected. Its only job is:
-         * - call the candidate model
-         * - validate the output
-         * - record a compact failure if needed
-         * - move to the next candidate
+         * This method is deliberately dumb. It does not know whether a task is code,
+         * medical, research, architecture, or normal chat. By the time execution gets
+         * here, the candidate model list has already been selected and trimmed.
          */
         private <T> ThoughtCallResult<T> executeWithFallback(
                         String runId,
@@ -356,7 +384,6 @@ public class SafeThoughtExecutor {
                         int attemptNumber,
                         ModelOperation<T> operation,
                         ResultValidator<T> validator) {
-
                 List<ThoughtFailureRecord> failures = new ArrayList<>();
 
                 if (models == null || models.isEmpty()) {
@@ -369,6 +396,7 @@ public class SafeThoughtExecutor {
                                         "Configure ModelFallbackPolicy with at least one model.",
                                         9,
                                         false));
+
                         return ThoughtCallResult.failure(failures);
                 }
 
@@ -421,23 +449,84 @@ public class SafeThoughtExecutor {
         }
 
         /**
-         * Validates a generated or repaired StructuredResponse.
+         * Limits model fan-out per stage.
          *
-         * DraftSanityValidator still receives a code-sanity boolean because that
-         * validator appears to have code-specific checks. The important change is:
-         * the boolean now comes from TaskClassification.taskType, not from another
-         * prompt keyword detector hidden inside this executor.
+         * This is important for commercial latency.
+         *
+         * If GPT-5.x worker generation is allowed 115 seconds and the fallback list
+         * contains four models, the "one attempt" stage can still become a many-minute
+         * request. That is exactly the kind of behavior users perceive as broken.
+         *
+         * Current policy:
+         *
+         * - Large freeform generation:
+         * Try only the selected first model. If it times out, report failure upward.
+         * Do not silently burn minutes on multiple weaker/alternate generators.
+         *
+         * - Large freeform repair:
+         * Same rule. One bounded repair call.
+         *
+         * - Evaluation:
+         * Allow up to two critics because critic calls should be smaller and quicker.
+         *
+         * - Normal tasks:
+         * Allow up to two candidates.
+         */
+        private List<String> selectStageModelCandidates(
+                        String stage,
+                        List<String> models,
+                        AgentRunPlan plan) {
+                if (models == null || models.isEmpty()) {
+                        return Collections.emptyList();
+                }
+
+                int maxCandidates = 2;
+
+                if (plan != null && plan.shouldUseFreeformWorkerOutput()) {
+                        if ("generation".equals(stage) || "repair".equals(stage)) {
+                                maxCandidates = 1;
+                        } else if ("evaluation".equals(stage)) {
+                                maxCandidates = 2;
+                        }
+                }
+
+                LinkedHashSet<String> unique = new LinkedHashSet<>();
+
+                for (String model : models) {
+                        if (model == null || model.isBlank()) {
+                                continue;
+                        }
+
+                        unique.add(model.trim());
+
+                        if (unique.size() >= maxCandidates) {
+                                break;
+                        }
+                }
+
+                return new ArrayList<>(unique);
+        }
+
+        /**
+         * Validates generated/repaired StructuredResponse.
+         *
+         * The response may have come from:
+         *
+         * - structured JSON mode, where the model itself emitted StructuredResponse
+         * - freeform text mode, where MiniAgentWorker wrapped direct text locally
+         *
+         * This validator treats both as normal StructuredResponse objects.
          */
         private ThoughtFailureRecord validateStructuredResponse(
                         String stage,
                         String model,
                         int attemptNumber,
                         StructuredResponse response,
-                        DraftSanityValidator.DraftSanityContext sanityContext) {
-
+                        DraftSanityValidator.DraftSanityContext sanityContext,
+                        AgentRunPlan plan) {
                 if (response == null) {
                         return ThoughtFailureRecord.of(
-                                        stage.equals("repair") ? ThoughtFailureType.REPAIR_FAILED
+                                        "repair".equals(stage) ? ThoughtFailureType.REPAIR_FAILED
                                                         : ThoughtFailureType.EMPTY_OUTPUT,
                                         stage,
                                         model,
@@ -456,7 +545,7 @@ public class SafeThoughtExecutor {
 
                 if (summary.isBlank() && raw.isBlank()) {
                         return ThoughtFailureRecord.of(
-                                        stage.equals("repair") ? ThoughtFailureType.REPAIR_FAILED
+                                        "repair".equals(stage) ? ThoughtFailureType.REPAIR_FAILED
                                                         : ThoughtFailureType.EMPTY_OUTPUT,
                                         stage,
                                         model,
@@ -470,7 +559,6 @@ public class SafeThoughtExecutor {
                 if (combined.contains("empty json returned")
                                 || combined.contains("generated an empty response")
                                 || combined.contains("empty response payload")) {
-
                         return ThoughtFailureRecord.of(
                                         ThoughtFailureType.EMPTY_SUMMARY,
                                         stage,
@@ -485,7 +573,6 @@ public class SafeThoughtExecutor {
                 if (combined.contains("safety filters")
                                 || combined.contains("safety filter")
                                 || combined.contains("blocked this prompt")) {
-
                         return ThoughtFailureRecord.of(
                                         ThoughtFailureType.MODEL_SAFETY_BLOCKED,
                                         stage,
@@ -500,6 +587,10 @@ public class SafeThoughtExecutor {
                 DraftSanityValidator.DraftSanityResult sanity = draftSanityValidator.validate(response, sanityContext);
 
                 if (!sanity.isPassed()) {
+                        if (shouldIgnoreNonFatalSanityFailureForLargeFreeform(plan, sanity, response)) {
+                                return null;
+                        }
+
                         ThoughtFailureType type = sanity.hasCriticalIssues()
                                         ? ThoughtFailureType.STRUCTURAL_FAILURE
                                         : ThoughtFailureType.UNKNOWN;
@@ -519,16 +610,69 @@ public class SafeThoughtExecutor {
         }
 
         /**
+         * Downgrades length-only sanity failures for large code/freeform answers.
+         *
+         * A common bad loop is:
+         *
+         * User: "Generate complete code."
+         * Worker: generates long code.
+         * Validator: fails with SUMMARY_TOO_LONG.
+         * Repair: compresses/truncates the code.
+         *
+         * That is wrong. For code generation, long output is often the desired result.
+         * Length can be a warning, but it should not kill an otherwise useful draft.
+         */
+        private boolean shouldIgnoreNonFatalSanityFailureForLargeFreeform(
+                        AgentRunPlan plan,
+                        DraftSanityValidator.DraftSanityResult sanity,
+                        StructuredResponse response) {
+                if (plan == null || sanity == null || response == null) {
+                        return false;
+                }
+
+                if (!plan.shouldUseFreeformWorkerOutput()) {
+                        return false;
+                }
+
+                String compact = safe(sanity.compactSummary()).toUpperCase(Locale.ROOT);
+
+                boolean mentionsLength = compact.contains("SUMMARY_TOO_LONG")
+                                || compact.contains("TOO_LONG")
+                                || compact.contains("TOO LONG");
+
+                if (!mentionsLength) {
+                        return false;
+                }
+
+                /*
+                 * Do not ignore serious code-quality failures. Missing code, placeholder
+                 * content, raw JSON leakage, or broken fences are different from length.
+                 */
+                boolean mentionsHardFailure = compact.contains("EXPECTED_CODE_MISSING")
+                                || compact.contains("PLACEHOLDER_CONTENT")
+                                || compact.contains("RAW_JSON_LEAK")
+                                || compact.contains("UNCLOSED_CODE_FENCE")
+                                || compact.contains("EMPTY");
+
+                if (mentionsHardFailure) {
+                        return false;
+                }
+
+                String visible = safe(response.getSummary());
+
+                return visible.length() >= 1000;
+        }
+
+        /**
          * Validates critic output.
          *
-         * A critic response with all zero scores and no explanation/fixes is almost
-         * always a malformed or empty structured response, not a legitimate critique.
+         * A critic response with all zero scores and no rationale/fixes is almost
+         * always malformed JSON or an empty model response, not a real critique.
          */
         private ThoughtFailureRecord validateEvaluation(
                         String model,
                         int attemptNumber,
                         EvaluationResult evaluation) {
-
                 if (evaluation == null) {
                         return ThoughtFailureRecord.of(
                                         ThoughtFailureType.CRITIC_MALFORMED,
@@ -572,25 +716,21 @@ public class SafeThoughtExecutor {
         }
 
         /**
-         * Decides whether this stage should use strong/protected fallback.
+         * Decides whether this stage should use protected fallback.
          *
-         * This is not classification. It only translates the already-created
-         * AgentRunPlan into fallback strength.
-         *
-         * Protected fallback is used for any high-attention task, not only code:
-         * - HARD tasks
-         * - deep reasoning tasks
-         * - tool/web/file tasks
-         * - large token budget tasks
-         * - architecture/research/medical/code/tool-required task types
-         * - PLAN_THINK_CRITIC_REPAIR and TOOL_AGENT pipelines
+         * This is not a new classifier. It only translates AgentRunPlan into fallback
+         * strength.
          */
         private boolean shouldUseProtectedFallback(AgentRunPlan plan) {
                 if (plan == null) {
                         return false;
                 }
 
-                if (plan.getMaxAnswerTokens() >= 6000) {
+                if (plan.shouldUseFreeformWorkerOutput()) {
+                        return true;
+                }
+
+                if (plan.getMaxAnswerTokens() >= 5500) {
                         return true;
                 }
 
@@ -629,8 +769,6 @@ public class SafeThoughtExecutor {
         /**
          * Enables code-specific deterministic sanity checks only when the classifier
          * said the task is code generation or code debugging.
-         *
-         * Do not infer this from raw text here. That was the old bug.
          */
         private boolean shouldEnableCodeSanity(AgentRunPlan plan) {
                 if (plan == null || plan.getClassification() == null) {
@@ -644,10 +782,10 @@ public class SafeThoughtExecutor {
         }
 
         /**
-         * Builds a complexity score for DraftSanityValidator from the existing plan.
+         * Converts AgentRunPlan into the validator's numeric complexity scale.
          *
-         * This is not a second classifier. It is just a compact numeric translation
-         * of decisions already made by TaskClassifier and AgentRunPlan.
+         * This is not a second classifier. It only translates already-decided plan
+         * values into the validator's older interface.
          */
         private int expectedComplexityFromPlan(AgentRunPlan plan) {
                 if (plan == null) {
@@ -681,12 +819,16 @@ public class SafeThoughtExecutor {
                         }
                 }
 
-                if (plan.getMaxAnswerTokens() >= 12000) {
-                        complexity = Math.max(complexity, 10);
-                } else if (plan.getMaxAnswerTokens() >= 8000) {
+                /*
+                 * Current one-shot cap is around 7000, so the old 12000/8000 thresholds
+                 * no longer make sense.
+                 */
+                if (plan.getMaxAnswerTokens() >= 6500) {
                         complexity = Math.max(complexity, 9);
-                } else if (plan.getMaxAnswerTokens() >= 6000) {
+                } else if (plan.getMaxAnswerTokens() >= 5500) {
                         complexity = Math.max(complexity, 8);
+                } else if (plan.getMaxAnswerTokens() >= 4000) {
+                        complexity = Math.max(complexity, 7);
                 }
 
                 return clamp(complexity, 0, 10);
@@ -696,7 +838,6 @@ public class SafeThoughtExecutor {
                         String taskText,
                         String stage,
                         AgentRunPlan plan) {
-
                 String query = safe(taskText);
                 String taskKind = buildTaskKind(stage, plan);
                 boolean codeSanity = shouldEnableCodeSanity(plan);
@@ -739,7 +880,6 @@ public class SafeThoughtExecutor {
                         List<String> structuralFixes,
                         List<String> missingInstructions,
                         Map<String, Object> dataset) {
-
                 return combineText(
                                 previousDraft,
                                 listToText(factualityFixes),
@@ -754,14 +894,15 @@ public class SafeThoughtExecutor {
                         String stage,
                         String preferredModel,
                         boolean protectedQualityTask,
+                        List<String> selectedModels,
                         AgentRunPlan plan) {
-
                 if (traceLogger == null) {
                         return;
                 }
 
                 Map<String, Object> data = planDebugData(plan);
-                data.put("model", safeModel(preferredModel));
+                data.put("preferredModel", safeModel(preferredModel));
+                data.put("selectedModels", selectedModels == null ? Collections.emptyList() : selectedModels);
                 data.put("protectedQualityTask", protectedQualityTask);
 
                 traceLogger.stage(
@@ -787,8 +928,11 @@ public class SafeThoughtExecutor {
                 data.put("maxAttempts", plan.getMaxAttempts());
                 data.put("successThreshold", plan.getSuccessThreshold());
                 data.put("maxAnswerTokens", plan.getMaxAnswerTokens());
-                data.put("maxWallClockMs",
+                data.put(
+                                "maxWallClockMs",
                                 plan.getMaxWallClockTime() == null ? 0 : plan.getMaxWallClockTime().toMillis());
+                data.put("freeformWorkerOutput", plan.shouldUseFreeformWorkerOutput());
+                data.put("skipLargeAnswerSynthesis", plan.shouldSkipLargeAnswerSynthesis());
 
                 TaskClassifier.TaskClassification classification = plan.getClassification();
 
@@ -796,8 +940,10 @@ public class SafeThoughtExecutor {
                         data.put("taskType", classification.taskType == null ? "" : classification.taskType.name());
                         data.put("difficulty",
                                         classification.difficulty == null ? "" : classification.difficulty.name());
-                        data.put("pipeline", classification.recommendedPipeline == null ? ""
-                                        : classification.recommendedPipeline.name());
+                        data.put(
+                                        "pipeline",
+                                        classification.recommendedPipeline == null ? ""
+                                                        : classification.recommendedPipeline.name());
                         data.put("needsDeepReasoning", classification.needsDeepReasoning);
                         data.put("needsTools", classification.needsTools);
                         data.put("needsWeb", classification.needsWeb);
@@ -813,7 +959,6 @@ public class SafeThoughtExecutor {
                         String userId,
                         String stage,
                         ThoughtFailureRecord failure) {
-
                 if (traceLogger == null || failure == null) {
                         return;
                 }
@@ -841,7 +986,6 @@ public class SafeThoughtExecutor {
                         String message,
                         String model,
                         long durationMs) {
-
                 if (traceLogger == null) {
                         return;
                 }
@@ -922,18 +1066,39 @@ public class SafeThoughtExecutor {
                 return builder.toString();
         }
 
+        /**
+         * Returns true when a list contains at least one item.
+         *
+         * The evaluator model may return empty lists for fixes/issues. This helper
+         * keeps the null/empty checks readable in validation code.
+         */
         private boolean hasItems(List<?> values) {
                 return values != null && !values.isEmpty();
         }
 
+        /**
+         * Clamps a numeric value into a closed interval.
+         *
+         * SafeThoughtExecutor uses this only for derived diagnostic values such as
+         * complexity. Runtime attempts and answer budgets are owned by AgentRunPlan.
+         */
         private int clamp(int value, int min, int max) {
                 return Math.max(min, Math.min(max, value));
         }
 
+        /**
+         * Normalizes model names for logs and failure records.
+         */
         private String safeModel(String model) {
-                return model == null || model.isBlank() ? "unknown" : model;
+                return model == null || model.isBlank() ? "unknown" : model.trim();
         }
 
+        /**
+         * Converts nullable text into an empty string.
+         *
+         * This avoids scattered null checks when building prompts, traces, and
+         * compact failure messages.
+         */
         private String safe(String value) {
                 return value == null ? "" : value;
         }

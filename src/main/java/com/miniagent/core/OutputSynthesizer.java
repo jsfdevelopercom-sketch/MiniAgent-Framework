@@ -8,6 +8,7 @@ import com.miniagent.api.OpenAiHttpClient;
 import com.miniagent.model.StructuredResponse;
 import com.miniagent.prompt.PromptFactory;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -42,6 +43,14 @@ public class OutputSynthesizer {
     private static final int MAX_SYNTHESIS_ATTEMPTS = 2;
     private static final int MAX_INPUT_CHARS = 120_000;
     private static final String DEFAULT_SYNTH_MODEL = ModelConstants.GPT_4_1_MINI;
+
+    /*
+     * Final synthesis is deliberately tiny. The synthesizer is a formatter, not
+     * a second problem-solving agent. Large/code answers should bypass synthesis
+     * before this budget is used. Non-code prose cleanup should finish quickly.
+     */
+    private static final int SYNTHESIS_MAX_OUTPUT_TOKENS = 800;
+    private static final Duration SYNTHESIS_TIMEOUT = Duration.ofSeconds(25);
 
     private final OpenAiHttpClient openAi;
     private final GeminiHttpClient gemini;
@@ -106,12 +115,7 @@ public class OutputSynthesizer {
 
         String bestText = chooseBestDraftText(safeDraft);
 
-        boolean isHeavyTask = false;
-        if (plan != null && plan.getClassification() != null) {
-            TaskClassifier.TaskClassification classification = plan.getClassification();
-            isHeavyTask = classification.difficulty == TaskClassifier.TaskDifficulty.HARD || 
-                          plan.getMaxAnswerTokens() >= 6000;
-        }
+        boolean isHeavyTask = plan != null && plan.shouldSkipLargeAnswerSynthesis();
 
         if (isHeavyTask) {
             return preserveHeavyDraftWithoutModelSynthesis(safeDraft, bestText);
@@ -358,7 +362,8 @@ public class OutputSynthesizer {
 
     /**
      * Returns a heavy draft directly without sending it to a final model.
-     * Uses hardcoded cleanup to ensure formatting is presentable without LLM latency.
+     * Uses hardcoded cleanup to ensure formatting is presentable without LLM
+     * latency.
      */
     private StructuredResponse preserveHeavyDraftWithoutModelSynthesis(
             StructuredResponse safeDraft,
@@ -385,11 +390,20 @@ public class OutputSynthesizer {
     }
 
     /**
-     * Executes one structured synthesis call with the requested provider.
+     * Executes one bounded structured synthesis call with the requested provider.
      *
-     * This method is only used for non-code finalization paths, or for tasks
-     * where the draft does not contain code. Provider selection is based on the
-     * model prefix so MiniAgent can keep using centralized model constants.
+     * This method is intentionally provider-thin: it selects the correct client,
+     * passes the same small synthesis budget to every provider, and lets the
+     * provider client build its own API-specific request shape. OpenAI uses
+     * response_format / Responses text.format depending on model family; Gemini
+     * uses generationConfig.maxOutputTokens; Claude uses max_tokens. This method
+     * should not know those wire-format details.
+     *
+     * Future debugger note:
+     * If a large code answer reaches this method, the bug is probably not here.
+     * Check Agent.finishFromStopDecision(...) and
+     * shouldBypassSynthesisForCode(...).
+     * Synthesis is only supposed to format smaller prose answers.
      */
     private String executeStructured(
             String model,
@@ -401,21 +415,58 @@ public class OutputSynthesizer {
             if (gemini == null) {
                 throw new IllegalStateException("Gemini synthesizer requested but Gemini client is null.");
             }
-            return gemini.executeStructuredCall(model, systemPrompt, userPrompt, 0.0, null);
+
+            /*
+             * Gemini has its own HTTP schema, but the public client overload keeps
+             * stage budgeting consistent with OpenAI and Claude. The synthesizer
+             * should receive only enough output room for JSON formatting.
+             */
+            return gemini.executeStructuredCall(
+                    model,
+                    systemPrompt,
+                    userPrompt,
+                    0.0,
+                    null,
+                    SYNTHESIS_MAX_OUTPUT_TOKENS,
+                    SYNTHESIS_TIMEOUT);
         }
 
         if (lower.startsWith("claude")) {
             if (claude == null) {
                 throw new IllegalStateException("Claude synthesizer requested but Claude client is null.");
             }
-            return claude.executeStructuredCall(model, systemPrompt, userPrompt, 0.0, null);
+
+            /*
+             * Claude synthesis is also bounded. A long Claude call here would be a
+             * design smell because the heavy reasoning/code work should already be
+             * finished by the worker/repair stages.
+             */
+            return claude.executeStructuredCall(
+                    model,
+                    systemPrompt,
+                    userPrompt,
+                    0.0,
+                    null,
+                    SYNTHESIS_MAX_OUTPUT_TOKENS,
+                    SYNTHESIS_TIMEOUT);
         }
 
         if (openAi == null) {
             throw new IllegalStateException("OpenAI synthesizer requested but OpenAI client is null.");
         }
 
-        return openAi.executeStructuredCall(model, systemPrompt, userPrompt, 0.0, null);
+        /*
+         * OpenAI gets the same small budget. This prevents a final formatting pass
+         * from accidentally becoming another long reasoning call.
+         */
+        return openAi.executeStructuredCall(
+                model,
+                systemPrompt,
+                userPrompt,
+                0.0,
+                null,
+                SYNTHESIS_MAX_OUTPUT_TOKENS,
+                SYNTHESIS_TIMEOUT);
     }
 
     /**

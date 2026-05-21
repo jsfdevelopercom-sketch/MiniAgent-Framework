@@ -8,6 +8,7 @@ import com.miniagent.api.OpenAiHttpClient;
 import com.miniagent.model.EvaluationResult;
 import com.miniagent.prompt.PromptFactory;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -30,6 +31,17 @@ import java.util.Locale;
  * judgement.
  */
 public class MiniAgentEvaluator {
+
+    /*
+     * The critic is a bounded quality gate, not another generator.
+     *
+     * A critic response should contain scores, issues, and repair instructions.
+     * It does not need thousands of tokens, and it should not be allowed to keep
+     * the whole user request waiting after the worker has already done the heavy
+     * generation.
+     */
+    private static final int CRITIC_MAX_OUTPUT_TOKENS = 1200;
+    private static final Duration CRITIC_TIMEOUT = Duration.ofSeconds(45);
 
     private final OpenAiHttpClient openAiHttpClient;
     private final GeminiHttpClient geminiHttpClient;
@@ -127,6 +139,21 @@ public class MiniAgentEvaluator {
         return result;
     }
 
+    /**
+     * Executes the critic call through the correct provider with a fixed critic
+     * budget.
+     *
+     * The evaluator must remain cheap and predictable. It receives a draft and
+     * returns structured JSON with scores and repair instructions. It should not
+     * attempt to regenerate the user answer, so every provider gets the same
+     * small output limit and timeout.
+     *
+     * Future debugger note:
+     * If critic calls are timing out, do not raise this timeout first. Check
+     * whether Agent/MiniAgentEvaluator is sending a giant full draft when a
+     * compact draft window would be enough. The critic's job is judgment, not
+     * re-authoring.
+     */
     private String executeStructuredCriticCall(String model, String systemPrompt, String userPrompt) {
         String lower = model == null ? "" : model.toLowerCase(Locale.ROOT);
 
@@ -134,21 +161,44 @@ public class MiniAgentEvaluator {
             if (geminiHttpClient == null) {
                 throw new IllegalStateException("Gemini critic requested but GeminiHttpClient is null.");
             }
-            return geminiHttpClient.executeStructuredCall(model, systemPrompt, userPrompt, 0.0, null);
+
+            return geminiHttpClient.executeStructuredCall(
+                    model,
+                    systemPrompt,
+                    userPrompt,
+                    0.0,
+                    null,
+                    CRITIC_MAX_OUTPUT_TOKENS,
+                    CRITIC_TIMEOUT);
         }
 
         if (lower.startsWith("claude")) {
             if (claudeHttpClient == null) {
                 throw new IllegalStateException("Claude critic requested but ClaudeHttpClient is null.");
             }
-            return claudeHttpClient.executeStructuredCall(model, systemPrompt, userPrompt, 0.0, null);
+
+            return claudeHttpClient.executeStructuredCall(
+                    model,
+                    systemPrompt,
+                    userPrompt,
+                    0.0,
+                    null,
+                    CRITIC_MAX_OUTPUT_TOKENS,
+                    CRITIC_TIMEOUT);
         }
 
         if (openAiHttpClient == null) {
             throw new IllegalStateException("OpenAI critic requested but OpenAiHttpClient is null.");
         }
 
-        return openAiHttpClient.executeStructuredCall(model, systemPrompt, userPrompt, 0.0, null);
+        return openAiHttpClient.executeStructuredCall(
+                model,
+                systemPrompt,
+                userPrompt,
+                0.0,
+                null,
+                CRITIC_MAX_OUTPUT_TOKENS,
+                CRITIC_TIMEOUT);
     }
 
     private String buildEvaluatorSystemPrompt() {
