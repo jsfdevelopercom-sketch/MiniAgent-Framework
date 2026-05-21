@@ -198,10 +198,10 @@ public class OutputSynthesizer {
         String answer = text == null ? "" : text;
         String query = originalQuery == null ? "" : originalQuery.toLowerCase(Locale.ROOT);
 
-        boolean userAskedForCode = userQueryLooksLikeCodeRequest(query);
-        boolean answerHasCode = answerLooksLikeCode(answer);
+        boolean userAskedForHeavyTask = userQueryLooksLikeHeavyTask(query);
+        boolean answerHasHeavyArtifact = answerLooksLikeHeavyArtifact(answer);
 
-        return userAskedForCode && answerHasCode;
+        return userAskedForHeavyTask && answerHasHeavyArtifact;
     }
 
     /**
@@ -210,7 +210,7 @@ public class OutputSynthesizer {
      * not final task classification; the MiniAgent classifier already did that.
      * The purpose here is only to protect generated code from final synthesis.
      */
-    private boolean userQueryLooksLikeCodeRequest(String queryLower) {
+    private boolean userQueryLooksLikeHeavyTask(String queryLower) {
         if (queryLower == null || queryLower.isBlank()) {
             return false;
         }
@@ -271,8 +271,14 @@ public class OutputSynthesizer {
                 queryLower.contains("fully working") ||
                 queryLower.contains("working code") ||
                 queryLower.contains("production") ||
-                queryLower.contains("full file") ||
-                queryLower.contains("entire file");
+                queryLower.contains("entire file") ||
+                queryLower.contains("essay") ||
+                queryLower.contains("report") ||
+                queryLower.contains("book") ||
+                queryLower.contains("comprehensive") ||
+                queryLower.contains("document") ||
+                queryLower.contains("thesis") ||
+                queryLower.contains("case summary");
     }
 
     /**
@@ -283,7 +289,7 @@ public class OutputSynthesizer {
      * package declarations, SQL, shell scripts, JSON/YAML-like structures, and
      * fenced code blocks.
      */
-    private boolean answerLooksLikeCode(String answer) {
+    private boolean answerLooksLikeHeavyArtifact(String answer) {
         if (answer == null || answer.isBlank()) {
             return false;
         }
@@ -298,6 +304,10 @@ public class OutputSynthesizer {
                 lower.contains("<script") ||
                 lower.contains("<style") ||
                 lower.contains("</html>") ||
+                lower.contains("# chapter") ||
+                lower.contains("# introduction") ||
+                lower.contains("executive summary") ||
+                lower.contains("table of contents") ||
                 lower.contains("function ") ||
                 lower.contains("class ") ||
                 lower.contains("interface ") ||

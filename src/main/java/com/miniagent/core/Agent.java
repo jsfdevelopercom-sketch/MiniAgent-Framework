@@ -158,6 +158,49 @@ public class Agent {
                 null);
     }
 
+    private String extractIncompleteContinuationPrompt(String userQuery, List<Map<String, String>> history) {
+        if (history == null || history.isEmpty()) {
+            return null;
+        }
+
+        String lastAssistantMessage = null;
+        for (int i = history.size() - 1; i >= 0; i--) {
+            Map<String, String> msg = history.get(i);
+            if ("assistant".equalsIgnoreCase(msg.get("role"))) {
+                lastAssistantMessage = msg.get("content");
+                break;
+            }
+        }
+
+        if (lastAssistantMessage == null || !lastAssistantMessage.contains("Generation paused due to length limits.")) {
+            return null;
+        }
+
+        String lowerQuery = userQuery.toLowerCase(Locale.ROOT).trim();
+
+        boolean isNextPartCommand = lowerQuery.contains("next part") ||
+                lowerQuery.contains("continue") ||
+                lowerQuery.equals("yes") ||
+                lowerQuery.equals("go on");
+
+        boolean isQuotingIncompleteText = false;
+        if (!isNextPartCommand && userQuery.length() > 5) {
+            String cleanUserQuery = userQuery.replace("\n", "").trim();
+            String cleanAssistantMsg = lastAssistantMessage.replace("\n", "");
+            if (cleanAssistantMsg.contains(cleanUserQuery)) {
+                isQuotingIncompleteText = true;
+            }
+        }
+
+        if (isNextPartCommand || isQuotingIncompleteText) {
+            return "Please continue generating the previous response exactly from where you left off. " +
+                    "Do not repeat the text that was already generated, just seamlessly append the next part. " +
+                    "Do not include introductory text, just continue the code or document exactly where it ended.";
+        }
+
+        return null;
+    }
+
     /**
      * Legacy helper kept only for source compatibility while routing is migrated.
      *
@@ -438,9 +481,32 @@ public class Agent {
                         "Task classification started.",
                         Map.of("requestedModel", requestedModel == null ? "" : requestedModel));
 
-                TaskClassifier.TaskClassification classification = taskClassifier.classify(
-                        safeQuery,
-                        TaskClassifier.ClassifierProvider.AUTO);
+                TaskClassifier.TaskClassification classification = null;
+                
+                String continuationPrompt = extractIncompleteContinuationPrompt(safeQuery, safeHistory);
+                if (continuationPrompt != null) {
+                    safeQuery = continuationPrompt;
+                    classification = new TaskClassifier.TaskClassification(
+                            TaskClassifier.TaskType.WRITING,
+                            TaskClassifier.TaskDifficulty.HARD,
+                            true,
+                            false,
+                            false,
+                            false,
+                            false,
+                            TaskClassifier.RecommendedPipeline.PLAN_THINK_CRITIC_REPAIR,
+                            3,
+                            90,
+                            14000,
+                            "AUTO_CONTINUATION",
+                            "AUTO_CONTINUATION"
+                    );
+                    updateThought("Detected continuation request. Resuming incomplete generation.");
+                } else {
+                    classification = taskClassifier.classify(
+                            safeQuery,
+                            TaskClassifier.ClassifierProvider.AUTO);
+                }
 
                 recordStageUsage(
                         safeUserId,

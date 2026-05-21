@@ -401,9 +401,8 @@ public class SafeThoughtExecutor {
                 }
 
                 for (String model : models) {
+                        long startedAt = System.currentTimeMillis();
                         try {
-                                long startedAt = System.currentTimeMillis();
-
                                 logStage(
                                                 runId,
                                                 userId,
@@ -433,6 +432,37 @@ public class SafeThoughtExecutor {
                                 failures.add(validationFailure);
                                 logFailure(runId, userId, stage, validationFailure);
 
+                        } catch (com.miniagent.api.ModelOutputIncompleteException incomplete) {
+                                if ("generation".equals(stage) || "repair".equals(stage)) {
+                                        logStage(
+                                                        runId,
+                                                        userId,
+                                                        AgentTraceEventType.WARNING,
+                                                        stage,
+                                                        "Output incomplete due to token limit. Returning partial result. Model: " + safeModel(model),
+                                                        model,
+                                                        System.currentTimeMillis() - startedAt);
+
+                                        StructuredResponse partialResponse = new StructuredResponse();
+                                        partialResponse.setThoughtProcess("Generation paused due to length limits. Output is incomplete.");
+                                        
+                                        String partialText = incomplete.getPartialText() == null ? "" : incomplete.getPartialText();
+                                        partialResponse.setSummary(partialText + "\n\n[SYSTEM NOTE: Generation paused due to length limits. Please reply with \"next part\" to continue generating the rest of the response.]");
+                                        partialResponse.setConvo("Please say 'next part' to continue generating.");
+                                        
+                                        @SuppressWarnings("unchecked")
+                                        T castedResponse = (T) partialResponse;
+
+                                        return ThoughtCallResult.success(castedResponse, model, failures);
+                                } else {
+                                        ThoughtFailureRecord failure = ThoughtFailureRecord.fromException(
+                                                        incomplete,
+                                                        stage,
+                                                        model,
+                                                        attemptNumber);
+                                        failures.add(failure);
+                                        logFailure(runId, userId, stage, failure);
+                                }
                         } catch (Exception exception) {
                                 ThoughtFailureRecord failure = ThoughtFailureRecord.fromException(
                                                 exception,

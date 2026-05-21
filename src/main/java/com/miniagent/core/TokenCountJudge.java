@@ -50,11 +50,11 @@ public class TokenCountJudge {
     private static final int MAX_STARTING_TOKENS = 12_000;
 
     private static final int DEFAULT_EASY_TOKENS = 1_200;
-    private static final int DEFAULT_MEDIUM_TOKENS = 3_500;
+    private static final int DEFAULT_MEDIUM_TOKENS = 3_000;
     private static final int DEFAULT_HARD_TOKENS = 6_000;
 
-    private static final int DEFAULT_LARGE_CODE_TOKENS = 9_000;
-    private static final int DEFAULT_VERY_LARGE_CODE_TOKENS = 11_000;
+    private static final int DEFAULT_HEAVY_TASK_TOKENS = 9_000;
+    private static final int DEFAULT_VERY_HEAVY_TASK_TOKENS = 11_000;
 
     private static final int FIRST_RETRY_FLOOR = 12_000;
     private static final int ABSOLUTE_RETRY_CAP = 14_000;
@@ -232,16 +232,16 @@ public class TokenCountJudge {
                 ? TaskClassifier.TaskDifficulty.MEDIUM
                 : classification.difficulty;
 
-        boolean veryLargeCode = looksLikeVeryLargeCodeTask(userTask);
-        boolean largeCode = veryLargeCode || looksLikeLargeCodeTask(userTask) || isCodeTask(taskType);
+        boolean veryHeavyTask = looksLikeVeryHeavyTask(userTask);
+        boolean heavyTask = veryHeavyTask || looksLikeHeavyTask(userTask) || isCodeTask(taskType);
 
         int starting;
 
-        if (veryLargeCode) {
-            starting = DEFAULT_VERY_LARGE_CODE_TOKENS;
-        } else if (largeCode && difficulty == TaskClassifier.TaskDifficulty.HARD) {
-            starting = DEFAULT_LARGE_CODE_TOKENS;
-        } else if (largeCode && difficulty == TaskClassifier.TaskDifficulty.MEDIUM) {
+        if (veryHeavyTask) {
+            starting = DEFAULT_VERY_HEAVY_TASK_TOKENS;
+        } else if (heavyTask && difficulty == TaskClassifier.TaskDifficulty.HARD) {
+            starting = DEFAULT_HEAVY_TASK_TOKENS;
+        } else if (heavyTask && difficulty == TaskClassifier.TaskDifficulty.MEDIUM) {
             starting = 6_000;
         } else {
             starting = switch (difficulty) {
@@ -257,11 +257,11 @@ public class TokenCountJudge {
 
         starting = clamp(starting, MIN_STARTING_TOKENS, MAX_STARTING_TOKENS);
 
-        int firstRetry = largeCode
+        int firstRetry = heavyTask
                 ? Math.max(starting + 2_000, FIRST_RETRY_FLOOR)
                 : Math.min(starting + 2_000, MAX_STARTING_TOKENS);
 
-        int secondRetry = largeCode
+        int secondRetry = heavyTask
                 ? ABSOLUTE_RETRY_CAP
                 : Math.min(firstRetry + 1_000, MAX_STARTING_TOKENS);
 
@@ -269,8 +269,8 @@ public class TokenCountJudge {
                 starting,
                 clamp(firstRetry, starting, ABSOLUTE_RETRY_CAP),
                 clamp(secondRetry, firstRetry, ABSOLUTE_RETRY_CAP),
-                largeCode ? ABSOLUTE_RETRY_CAP : MAX_STARTING_TOKENS,
-                largeCode,
+                heavyTask ? ABSOLUTE_RETRY_CAP : MAX_STARTING_TOKENS,
+                heavyTask,
                 "Heuristic budget based on task type and difficulty.",
                 "HEURISTIC");
     }
@@ -292,11 +292,11 @@ public class TokenCountJudge {
             return heuristic.withSource("HEURISTIC_NULL_JUDGE_JSON");
         }
 
-        boolean largeCode = looksLikeLargeCodeTask(userTask)
-                || looksLikeVeryLargeCodeTask(userTask)
+        boolean heavyTask = looksLikeHeavyTask(userTask)
+                || looksLikeVeryHeavyTask(userTask)
                 || isCodeTask(classification == null ? null : classification.taskType);
 
-        int minimumStart = largeCode
+        int minimumStart = heavyTask
                 ? Math.min(heuristic.getStartingMaxOutputTokens(), MAX_STARTING_TOKENS)
                 : MIN_STARTING_TOKENS;
 
@@ -322,7 +322,7 @@ public class TokenCountJudge {
         firstRetry = clamp(firstRetry, starting, absoluteCap);
         secondRetry = clamp(secondRetry, firstRetry, absoluteCap);
 
-        if (largeCode) {
+        if (heavyTask) {
             firstRetry = Math.max(firstRetry, Math.min(FIRST_RETRY_FLOOR, absoluteCap));
             secondRetry = Math.max(secondRetry, firstRetry);
         }
@@ -336,7 +336,7 @@ public class TokenCountJudge {
                 firstRetry,
                 secondRetry,
                 absoluteCap,
-                parsed.needsChunkedIfIncomplete || largeCode,
+                parsed.needsChunkedIfIncomplete || heavyTask,
                 reason,
                 "MODEL:" + judgeModel);
     }
@@ -373,16 +373,16 @@ public class TokenCountJudge {
     }
 
     /**
-     * Detects large code requests from user wording.
+     * Detects large tasks from user wording.
      *
      * This is only a fallback guard around the classifier. It catches explicit
      * user language such as "complete", "full working", or "no placeholders"
      * that strongly implies the answer needs more visible output tokens.
      */
-    private boolean looksLikeLargeCodeTask(String task) {
+    private boolean looksLikeHeavyTask(String task) {
         String q = task == null ? "" : task.toLowerCase(Locale.ROOT);
 
-        boolean code = containsAny(
+        boolean heavyContext = containsAny(
                 q,
                 "code",
                 "html",
@@ -397,7 +397,8 @@ public class TokenCountJudge {
                 "backend",
                 "class",
                 "method",
-                "api");
+                "api",
+                "essay", "report", "case summary", "book", "thesis");
 
         boolean large = containsAny(
                 q,
@@ -413,27 +414,22 @@ public class TokenCountJudge {
                 "no placeholder",
                 "no placeholders",
                 "single file",
-                "entire file");
+                "entire file", "entire document");
 
-        return code && large;
+        return heavyContext && large;
     }
 
     /**
      * Detects the specific class of prompts that almost never fit into the old
-     * 6500-token budget, such as a complete VS-Code-like single-file editor.
+     * 6500-token budget.
      */
-    private boolean looksLikeVeryLargeCodeTask(String task) {
+    private boolean looksLikeVeryHeavyTask(String task) {
         String q = task == null ? "" : task.toLowerCase(Locale.ROOT);
 
-        boolean editorOrIde = containsAny(
+        boolean massiveScope = containsAny(
                 q,
-                "vs code",
-                "vscode",
-                "visual studio code",
-                "visual studio",
-                "texteditor",
-                "text editor",
-                "ide");
+                "ide", "entire codebase", "full app", "complete application", "large document",
+                "massive", "entire book", "full book");
 
         boolean completeFeatureSet = containsAny(
                 q,
@@ -443,16 +439,15 @@ public class TokenCountJudge {
                 "full working",
                 "complex complete");
 
-        boolean frontendApp = containsAny(
+        boolean heavyOutput = containsAny(
                 q,
                 "index.html",
                 "html",
-                "javascript",
-                "frontend",
-                "app");
+                "javascript", "essay", "report", "book");
 
-        return editorOrIde && completeFeatureSet && frontendApp;
+        return massiveScope && completeFeatureSet && heavyOutput;
     }
+
 
     /**
      * Extracts a JSON object from provider output.

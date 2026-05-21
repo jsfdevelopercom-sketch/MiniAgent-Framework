@@ -150,9 +150,9 @@ public class PromptFactory {
         String safeLiveInjections = bullets(liveInjections);
         String safeDataset = mapToText(dataset);
 
-        boolean codeTask = looksLikeCodeOrEngineeringTask(safeTask)
-                || looksLikeCodeOrEngineeringTask(safeLiveInjections)
-                || looksLikeCodeOrEngineeringTask(safeDataset);
+        boolean codeTask = looksLikeHeavyTask(safeTask)
+                || looksLikeHeavyTask(safeLiveInjections)
+                || looksLikeHeavyTask(safeDataset);
 
         return joinSections(
                 "TASK",
@@ -258,11 +258,11 @@ public class PromptFactory {
             Map<String, Object> dataset,
             List<String> liveInjections,
             List<Map<String, String>> history) {
-        boolean codeTask = looksLikeCodeOrEngineeringTask(draft)
-                || looksLikeCodeOrEngineeringTask(bullets(rules))
-                || looksLikeCodeOrEngineeringTask(bullets(liveInjections))
-                || looksLikeCodeOrEngineeringTask(mapToText(dataset))
-                || looksLikeCodeOrEngineeringTask(historyToText(history));
+        boolean codeTask = looksLikeHeavyTask(draft)
+                || looksLikeHeavyTask(bullets(rules))
+                || looksLikeHeavyTask(bullets(liveInjections))
+                || looksLikeHeavyTask(mapToText(dataset))
+                || looksLikeHeavyTask(historyToText(history));
 
         return joinSections(
                 "COMPACT RECENT CONVERSATION HISTORY",
@@ -342,11 +342,11 @@ public class PromptFactory {
             List<String> structuralFixes,
             List<String> missingInstructions,
             Map<String, Object> dataset) {
-        boolean codeTask = looksLikeCodeOrEngineeringTask(previousDraft)
-                || looksLikeCodeOrEngineeringTask(bullets(factualityFixes))
-                || looksLikeCodeOrEngineeringTask(bullets(structuralFixes))
-                || looksLikeCodeOrEngineeringTask(bullets(missingInstructions))
-                || looksLikeCodeOrEngineeringTask(mapToText(dataset));
+        boolean codeTask = looksLikeHeavyTask(previousDraft)
+                || looksLikeHeavyTask(bullets(factualityFixes))
+                || looksLikeHeavyTask(bullets(structuralFixes))
+                || looksLikeHeavyTask(bullets(missingInstructions))
+                || looksLikeHeavyTask(mapToText(dataset));
 
         return joinSections(
                 "BROKEN DRAFT",
@@ -496,10 +496,10 @@ public class PromptFactory {
             String bestDraft,
             String repairMemory,
             Map<String, Object> dataset) {
-        boolean codeTask = looksLikeCodeOrEngineeringTask(originalTask)
-                || looksLikeCodeOrEngineeringTask(bestDraft)
-                || looksLikeCodeOrEngineeringTask(repairMemory)
-                || looksLikeCodeOrEngineeringTask(mapToText(dataset));
+        boolean codeTask = looksLikeHeavyTask(originalTask)
+                || looksLikeHeavyTask(bestDraft)
+                || looksLikeHeavyTask(repairMemory)
+                || looksLikeHeavyTask(mapToText(dataset));
 
         return joinSections(
                 "ORIGINAL TASK",
@@ -597,14 +597,14 @@ public class PromptFactory {
                 "- Judge only the draft above.",
                 "- Do not rewrite the draft.",
                 "- Return only JSON matching the required schema.",
-                "- If the draft is a small demo but the user asked for complete/professional/production-level code, pass=false.",
-                "- If the user asked for Visual-Studio/VS-Code-level editor and the draft is only textarea/contenteditable/basic Monaco shell, pass=false.",
+                "- If the draft is a small demo/excerpt but the user asked for complete/professional/production-level output, pass=false.",
+                "- If the user asked for a massive, feature-complete application (e.g., an entire IDE, complex CRM, or full game) and the draft only provides a basic shell, pass=false.",
                 "- If the draft contains TODO, placeholder, ellipsis, omitted sections, or undefined helpers, pass=false.",
                 "- If menus/buttons/controls are represented but not connected, pass=false.",
                 "- If the answer explains features instead of implementing them, pass=false.",
                 "- Provide specific repair instructions listing missing features and incomplete areas.",
-                "- Do not penalize length when complete code was requested.",
-                "- Completeness and instruction adherence should dominate the score for code generation.");
+                "- Do not penalize length when complete artifacts were requested.",
+                "- Completeness and instruction adherence should dominate the score for heavy/generation tasks.");
     }
 
     /**
@@ -678,9 +678,9 @@ public class PromptFactory {
     }
 
     /**
-     * Detects whether text suggests a code/software-engineering task.
+     * Detects whether text suggests a heavy task (code, engineering, or massive text generation).
      */
-    private boolean looksLikeCodeOrEngineeringTask(String text) {
+    private boolean looksLikeHeavyTask(String text) {
         if (text == null || text.isBlank()) {
             return false;
         }
@@ -727,8 +727,6 @@ public class PromptFactory {
                 s.contains("server") ||
                 s.contains("editor") ||
                 s.contains("ide") ||
-                s.contains("visual studio") ||
-                s.contains("vs code") ||
                 s.contains("compile") ||
                 s.contains("runnable") ||
                 s.contains("debug") ||
@@ -739,7 +737,14 @@ public class PromptFactory {
                 s.contains("public class") ||
                 s.contains("const ") ||
                 s.contains("let ") ||
-                s.contains("var ");
+                s.contains("var ") ||
+                s.contains("essay") ||
+                s.contains("report") ||
+                s.contains("book") ||
+                s.contains("comprehensive") ||
+                s.contains("document") ||
+                s.contains("thesis") ||
+                s.contains("case summary");
     }
 
     /* ----------------------------- Helpers ----------------------------- */

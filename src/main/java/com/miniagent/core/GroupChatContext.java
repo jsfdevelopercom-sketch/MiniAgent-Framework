@@ -56,7 +56,7 @@ public class GroupChatContext {
         context.setAllowMarkdown(true);
         return context;
     }
-private static boolean looksLikeCodeRequest(String text) {
+private static boolean looksLikeHeavyTaskRequest(String text) {
     String q = text == null ? "" : text.toLowerCase();
 
     return q.contains("code") ||
@@ -68,7 +68,14 @@ private static boolean looksLikeCodeRequest(String text) {
             q.contains("complete") ||
             q.contains("elaborate") ||
             q.contains("app") ||
-            q.contains("editor");
+            q.contains("editor") ||
+            q.contains("essay") ||
+            q.contains("report") ||
+            q.contains("book") ||
+            q.contains("thesis") ||
+            q.contains("case summary") ||
+            q.contains("comprehensive") ||
+            q.contains("document");
 }
     public static GroupChatContext fromRawQuery(String rawUserQuery, ModelEntityMode mode) {
         GroupChatContext context = new GroupChatContext();
@@ -80,7 +87,7 @@ private static boolean looksLikeCodeRequest(String text) {
             context.setAllowSilence(false);
             context.setAllowMarkdown(true);
         } 
-        if (looksLikeCodeRequest(rawUserQuery)) {
+        if (looksLikeHeavyTaskRequest(rawUserQuery)) {
             context.setMaxWords(2500);
             context.setAllowSilence(false);
             context.setAllowMarkdown(true);

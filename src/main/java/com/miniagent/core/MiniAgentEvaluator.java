@@ -420,7 +420,7 @@ public class MiniAgentEvaluator {
             result.setPass(false);
         }
 
-        if (looksLikeCodeTask(rigidRules, draft) && containsCodeRisk(lowerDraft)) {
+        if (looksLikeHeavyTask(rigidRules, draft) && containsCodeRisk(lowerDraft)) {
             addIssue(
                     issues,
                     "major",
@@ -665,7 +665,7 @@ public class MiniAgentEvaluator {
                 text.contains("class ");
     }
 
-    private boolean looksLikeCodeTask(List<String> rigidRules, String draft) {
+    private boolean looksLikeHeavyTask(List<String> rigidRules, String draft) {
         StringBuilder sb = new StringBuilder();
 
         if (rigidRules != null) {
@@ -689,7 +689,13 @@ public class MiniAgentEvaluator {
                 lower.contains("class") ||
                 lower.contains("method") ||
                 lower.contains("function") ||
-                lower.contains("import");
+                lower.contains("import") ||
+                lower.contains("essay") ||
+                lower.contains("report") ||
+                lower.contains("book") ||
+                lower.contains("thesis") ||
+                lower.contains("comprehensive") ||
+                lower.contains("case summary");
     }
 
     private boolean isLikelyMustIncludeInstruction(String instruction) {

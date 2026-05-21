@@ -313,11 +313,19 @@ public class TaskClassifier {
         boolean needsFileAccess = classification.needsFileAccess;
         boolean needsUserClarification = classification.needsUserClarification;
 
-        boolean largeCodeTask = looksLikeLargeCodeTask(normalizedTask);
-        boolean veryLargeCodeTask = looksLikeVeryLargeCodeTask(normalizedTask);
+        boolean heavyTask = looksLikeHeavyTask(normalizedTask);
+        boolean veryHeavyTask = looksLikeVeryHeavyTask(normalizedTask);
 
-        if (largeCodeTask || veryLargeCodeTask) {
-            taskType = TaskType.CODE_GENERATION;
+        if (heavyTask || veryHeavyTask) {
+            // General heavy tasks still require HARD difficulty and deep reasoning,
+            // but we don't force taskType to CODE_GENERATION if it isn't code.
+            if (taskType == TaskType.UNKNOWN || taskType == TaskType.GENERAL_QA) {
+                 if (containsAny(normalizedTask.toLowerCase(Locale.ROOT), "code", "html", "javascript", "java", "python", "app")) {
+                     taskType = TaskType.CODE_GENERATION;
+                 } else {
+                     taskType = TaskType.WRITING;
+                 }
+            }
             difficulty = TaskDifficulty.HARD;
             needsDeepReasoning = true;
         }
@@ -332,7 +340,7 @@ public class TaskClassifier {
             pipeline = RecommendedPipeline.REFUSE;
         } else if (needsTools) {
             pipeline = RecommendedPipeline.TOOL_AGENT;
-        } else if (largeCodeTask || veryLargeCodeTask) {
+        } else if (heavyTask || veryHeavyTask) {
             pipeline = RecommendedPipeline.PLAN_THINK_CRITIC_REPAIR;
         } else if (needsDeepReasoning && difficulty == TaskDifficulty.HARD) {
             pipeline = RecommendedPipeline.PLAN_THINK_CRITIC_REPAIR;
@@ -389,7 +397,7 @@ public class TaskClassifier {
             return 1;
         }
 
-        if (looksLikeLargeCodeTask(userTask) || looksLikeVeryLargeCodeTask(userTask)) {
+        if (looksLikeHeavyTask(userTask) || looksLikeVeryHeavyTask(userTask)) {
             return 1;
         }
 
@@ -460,11 +468,11 @@ public class TaskClassifier {
 
     /** Determines the minimum useful one-shot budget for this task class. */
     private static int minimumAllowedAnswerTokensFor(TaskType taskType, TaskDifficulty difficulty, String userTask) {
-        if (looksLikeVeryLargeCodeTask(userTask)) {
+        if (looksLikeVeryHeavyTask(userTask)) {
             return 6500;
         }
 
-        if (looksLikeLargeCodeTask(userTask)) {
+        if (looksLikeHeavyTask(userTask)) {
             return 6000;
         }
 
@@ -509,8 +517,8 @@ public class TaskClassifier {
 
     /** Determines the maximum allowed one-shot budget for this task class. */
     private static int maximumAllowedAnswerTokensFor(TaskType taskType, TaskDifficulty difficulty, String userTask) {
-        if (looksLikeVeryLargeCodeTask(userTask) || looksLikeLargeCodeTask(userTask)) {
-            return 7000;
+        if (looksLikeVeryHeavyTask(userTask) || looksLikeHeavyTask(userTask)) {
+            return 12000;
         }
 
         if (taskType == TaskType.CODE_GENERATION || taskType == TaskType.CODE_DEBUGGING) {
@@ -556,11 +564,11 @@ public class TaskClassifier {
      * Provides fallback token budgets when the classifier model omits the field.
      */
     private static int defaultMaxAnswerTokensFor(TaskType taskType, TaskDifficulty difficulty, String userTask) {
-        if (looksLikeVeryLargeCodeTask(userTask)) {
+        if (looksLikeVeryHeavyTask(userTask)) {
             return 7000;
         }
 
-        if (looksLikeLargeCodeTask(userTask)) {
+        if (looksLikeHeavyTask(userTask)) {
             return 6500;
         }
 
@@ -608,9 +616,8 @@ public class TaskClassifier {
         TaskType taskType = roughTaskType(userTask);
         TaskDifficulty difficulty = roughDifficulty(userTask);
 
-        boolean largeCodeTask = looksLikeLargeCodeTask(userTask) || looksLikeVeryLargeCodeTask(userTask);
-
-        if (largeCodeTask) {
+        boolean heavyTask = looksLikeHeavyTask(userTask) || looksLikeVeryHeavyTask(userTask);
+        if (heavyTask) {
             taskType = TaskType.CODE_GENERATION;
             difficulty = TaskDifficulty.HARD;
         }
@@ -618,7 +625,7 @@ public class TaskClassifier {
         boolean needsDeepReasoning = difficulty != TaskDifficulty.EASY;
 
         RecommendedPipeline pipeline;
-        if (largeCodeTask) {
+        if (heavyTask) {
             pipeline = RecommendedPipeline.PLAN_THINK_CRITIC_REPAIR;
         } else if (difficulty == TaskDifficulty.HARD) {
             pipeline = RecommendedPipeline.PLAN_THINK_CRITIC_REPAIR;
@@ -732,43 +739,45 @@ public class TaskClassifier {
     }
 
     /**
-     * Detects complete/production-style code tasks that must not be under-budgeted.
+     * Detects large tasks that must not be under-budgeted.
+     * This includes both large codebase generations and massive text tasks (essays, books, comprehensive reports).
      */
-    private static boolean looksLikeLargeCodeTask(String task) {
+    private static boolean looksLikeHeavyTask(String task) {
         String q = task == null ? "" : task.toLowerCase(Locale.ROOT);
 
-        boolean code = containsAny(q,
+        boolean heavyContext = containsAny(q,
                 "code", "html", "index.html", "javascript", "typescript", "java", "python",
                 "spring", "android", "kotlin", "app", "editor", "frontend", "backend",
-                "class", "method", "api", "script", "css");
+                "class", "method", "api", "script", "css",
+                "essay", "book", "report", "comprehensive", "case summary", "document",
+                "thesis", "whitepaper");
 
         boolean large = containsAny(q,
                 "complete", "full", "working", "production", "production-grade", "production grade",
                 "elaborate", "advanced", "complex", "extremely detailed", "no placeholder",
-                "no placeholders", "must not include placeholders", "like vscode", "vs code",
-                "visual studio code", "microsoft visual studio", "all features", "entire");
+                "no placeholders", "must not include placeholders", "all features", "entire");
 
-        return code && large;
+        return heavyContext && large;
     }
 
     /**
-     * Detects truly oversized IDE/app prompts that are still capped for one-shot
+     * Detects truly oversized prompts (complete apps, full books) that are still capped for one-shot
      * mode.
      */
-    private static boolean looksLikeVeryLargeCodeTask(String task) {
+    private static boolean looksLikeVeryHeavyTask(String task) {
         String q = task == null ? "" : task.toLowerCase(Locale.ROOT);
 
-        boolean editorOrIde = containsAny(q,
-                "vs code", "vscode", "visual studio code", "visual studio", "microsoft visual studio",
-                "texteditor", "text editor", "ide");
+        boolean massiveScope = containsAny(q,
+                "ide", "entire codebase", "full app", "complete application", "large document",
+                "massive", "entire book", "full book");
 
         boolean completeFeatureSet = containsAny(q,
                 "all features", "complete with", "complete code", "full working",
-                "production-grade", "production grade", "complex complete");
+                "production-grade", "production grade", "complex complete", "in-depth");
 
-        boolean frontendApp = containsAny(q, "index.html", "html", "javascript", "frontend", "app");
+        boolean heavyOutput = containsAny(q, "index.html", "html", "javascript", "frontend", "app", "essay", "report", "book");
 
-        return editorOrIde && completeFeatureSet && frontendApp;
+        return massiveScope && completeFeatureSet && heavyOutput;
     }
 
     /**
@@ -818,7 +827,7 @@ public class TaskClassifier {
         String lower = task == null ? "" : task.toLowerCase(Locale.ROOT);
         int length = task == null ? 0 : task.length();
 
-        if (looksLikeLargeCodeTask(task) || looksLikeVeryLargeCodeTask(task)) {
+        if (looksLikeHeavyTask(task) || looksLikeVeryHeavyTask(task)) {
             return TaskDifficulty.HARD;
         }
 
@@ -829,7 +838,7 @@ public class TaskClassifier {
         if (containsAny(lower,
                 "architecture", "recursive", "agent", "debug", "compile", "production",
                 "security", "medical", "legal", "financial", "complete code", "full working",
-                "all features", "visual studio", "vs code", "vscode")) {
+                "all features", "essay", "book", "report", "comprehensive")) {
             return TaskDifficulty.HARD;
         }
 
